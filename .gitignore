@@ -1,0 +1,7 @@
+/target
+*.db
+*.db-shm
+*.db-wal
+*.log
+.agent-keys
+bridge/bridge.toml

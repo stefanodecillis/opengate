@@ -1,0 +1,43 @@
+[package]
+name = "opengate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless, agent-first task management engine"
+keywords = ["task-management", "agents", "ai", "mcp"]
+categories = ["command-line-utilities", "web-programming"]
+
+[[bin]]
+name = "opengate"
+path = "src/main.rs"
+
+[lib]
+name = "opengate"
+path = "src/lib.rs"
+
+[dependencies]
+opengate-models = { path = "../opengate-models" }
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+clap = { version = "4", features = ["derive", "env"] }
+tower-http = { version = "0.5", features = ["cors", "set-header"] }
+chrono = { version = "0.4", features = ["serde"] }
+tower = "0.4"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+opengate-models = { path = "../opengate-models" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = "0.4"

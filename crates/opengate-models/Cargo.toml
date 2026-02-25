@@ -1,0 +1,12 @@
+[package]
+name = "opengate-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Domain types, enums, and DTOs for OpenGate"
+keywords = ["task-management", "agents", "ai", "mcp"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
