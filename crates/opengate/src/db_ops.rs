@@ -1546,7 +1546,7 @@ pub fn list_activity(conn: &Connection, task_id: &str) -> Vec<TaskActivity> {
 
 // --- Agents ---
 
-const AGENT_COLS: &str = "id, name, api_key_hash, skills, description, status, max_concurrent_tasks, webhook_url, config, last_seen_at, created_at, model, provider, cost_tier, capabilities, seniority, role, webhook_events, stale_timeout";
+const AGENT_COLS: &str = "id, name, api_key_hash, skills, description, status, max_concurrent_tasks, webhook_url, config, last_seen_at, created_at, model, provider, cost_tier, capabilities, seniority, role, webhook_events, stale_timeout, owner_id";
 
 fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agent> {
     let id: String = row.get(0)?;
@@ -1619,6 +1619,7 @@ fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agen
         stale_timeout,
         last_seen_at: last_seen,
         created_at: row.get(10)?,
+        owner_id: row.get(19)?,
     })
 }
 
@@ -1660,8 +1661,8 @@ pub fn create_agent(conn: &Connection, input: &CreateAgent) -> (Agent, String) {
     let role = input.role.as_deref().unwrap_or("executor");
 
     conn.execute(
-        "INSERT INTO agents (id, name, api_key_hash, skills, created_at, model, provider, cost_tier, capabilities, seniority, role) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![id, input.name, api_key_hash, skills_json, now, input.model, input.provider, input.cost_tier, capabilities_json, seniority, role],
+        "INSERT INTO agents (id, name, api_key_hash, skills, created_at, model, provider, cost_tier, capabilities, seniority, role, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![id, input.name, api_key_hash, skills_json, now, input.model, input.provider, input.cost_tier, capabilities_json, seniority, role, input.owner_id],
     )
     .unwrap();
 
@@ -1685,6 +1686,18 @@ pub fn list_agents(conn: &Connection) -> Vec<Agent> {
     let sql = format!("SELECT {} FROM agents ORDER BY name", AGENT_COLS);
     let mut stmt = conn.prepare(&sql).unwrap();
     stmt.query_map([], |row| row_to_agent(conn, row))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+pub fn list_agents_by_owner(conn: &Connection, owner_id: &str) -> Vec<Agent> {
+    let sql = format!(
+        "SELECT {} FROM agents WHERE owner_id = ?1 ORDER BY name",
+        AGENT_COLS
+    );
+    let mut stmt = conn.prepare(&sql).unwrap();
+    stmt.query_map(params![owner_id], |row| row_to_agent(conn, row))
         .unwrap()
         .filter_map(|r| r.ok())
         .collect()

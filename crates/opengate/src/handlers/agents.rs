@@ -5,7 +5,6 @@ use axum::{
 };
 
 use crate::app::AppState;
-use crate::db_ops;
 use opengate_models::*;
 
 pub async fn list_agents(
@@ -13,16 +12,13 @@ pub async fn list_agents(
     _identity: Identity,
     Query(query): Query<AgentQuery>,
 ) -> Json<Vec<Agent>> {
-    let conn = state.db.lock().unwrap();
-    let mut agents = db_ops::list_agents(&conn);
+    let mut agents = state.storage.list_agents(None);
 
     if let Some(ref cap) = query.capability {
         agents.retain(|agent| {
             agent.capabilities.iter().any(|ac| {
-                // Exact match
                 ac == cap
-                // Domain match: query "coding" matches agent cap "coding:rust"
-                || (!cap.contains(':') && ac.starts_with(&format!("{cap}:")))
+                    || (!cap.contains(':') && ac.starts_with(&format!("{cap}:")))
             })
         });
     }
@@ -39,8 +35,6 @@ pub async fn match_best_agent(
     _identity: Identity,
     Query(query): Query<AgentMatchQuery>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
     let capabilities: Option<Vec<String>> = query.capability.map(|c| {
         c.split(',')
             .map(|s| s.trim().to_string())
@@ -56,8 +50,8 @@ pub async fn match_best_agent(
         agent_id: None,
     };
 
-    match db_ops::find_best_agent(&conn, &strategy) {
-        Some(agent_id) => match db_ops::get_agent(&conn, &agent_id) {
+    match state.storage.find_best_agent(None, &strategy) {
+        Some(agent_id) => match state.storage.get_agent(None, &agent_id) {
             Some(agent) => Ok(Json(agent)),
             None => Err((
                 StatusCode::NOT_FOUND,
@@ -76,8 +70,7 @@ pub async fn get_agent(
     _identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    match db_ops::get_agent(&conn, &id) {
+    match state.storage.get_agent(None, &id) {
         Some(agent) => Ok(Json(agent)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -92,8 +85,7 @@ pub async fn update_agent(
     Path(id): Path<String>,
     Json(input): Json<UpdateAgent>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    match db_ops::update_agent(&conn, &id, &input) {
+    match state.storage.update_agent(None, &id, &input) {
         Some(agent) => Ok(Json(agent)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -107,8 +99,7 @@ pub async fn create_agent(
     _identity: Identity,
     Json(input): Json<CreateAgent>,
 ) -> Result<(StatusCode, Json<AgentCreated>), (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    let (agent, api_key) = db_ops::create_agent(&conn, &input);
+    let (agent, api_key) = state.storage.create_agent(None, &input);
     Ok((StatusCode::CREATED, Json(AgentCreated { agent, api_key })))
 }
 
@@ -117,8 +108,7 @@ pub async fn delete_agent(
     _identity: Identity,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    if db_ops::delete_agent(&conn, &id) {
+    if state.storage.delete_agent(None, &id) {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -142,8 +132,7 @@ pub async fn heartbeat(
         }
     };
 
-    let conn = state.db.lock().unwrap();
-    db_ops::update_heartbeat(&conn, &agent_id);
+    state.storage.update_heartbeat(None, &agent_id);
     Ok(Json(serde_json::json!({"status": "ok"})))
 }
 
@@ -167,9 +156,8 @@ pub async fn register_agent(
         ));
     }
 
-    let conn = state.db.lock().unwrap();
-    let (agent, api_key) = db_ops::create_agent(
-        &conn,
+    let (agent, api_key) = state.storage.create_agent(
+        None,
         &CreateAgent {
             name: input.name,
             skills: input.skills,
@@ -179,6 +167,7 @@ pub async fn register_agent(
             capabilities: input.capabilities,
             seniority: None,
             role: None,
+            owner_id: input.owner_id,
         },
     );
     Ok((StatusCode::CREATED, Json(AgentCreated { agent, api_key })))
@@ -198,12 +187,7 @@ pub async fn my_notifications(
             ))
         }
     };
-    let conn = state.db.lock().unwrap();
-    Ok(Json(db_ops::list_notifications(
-        &conn,
-        &agent_id,
-        query.unread,
-    )))
+    Ok(Json(state.storage.list_notifications(None, &agent_id, query.unread)))
 }
 
 pub async fn ack_notification(
@@ -220,8 +204,7 @@ pub async fn ack_notification(
             ))
         }
     };
-    let conn = state.db.lock().unwrap();
-    if db_ops::ack_notification(&conn, &agent_id, id) {
+    if state.storage.ack_notification(None, &agent_id, id) {
         Ok(Json(serde_json::json!({"ok": true})))
     } else {
         Err((
@@ -244,8 +227,7 @@ pub async fn inbox(
             ))
         }
     };
-    let conn = state.db.lock().unwrap();
-    Ok(Json(db_ops::get_agent_inbox(&conn, &agent_id)))
+    Ok(Json(state.storage.get_agent_inbox(None, &agent_id)))
 }
 
 pub async fn ack_all_notifications(
@@ -261,7 +243,6 @@ pub async fn ack_all_notifications(
             ))
         }
     };
-    let conn = state.db.lock().unwrap();
-    let count = db_ops::ack_all_notifications(&conn, &agent_id);
+    let count = state.storage.ack_all_notifications(None, &agent_id);
     Ok(Json(serde_json::json!({"ok": true, "acknowledged": count})))
 }

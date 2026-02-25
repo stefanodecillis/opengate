@@ -357,5 +357,15 @@ pub fn init_db(path: &str) -> Connection {
     // v15: review load tracking — timestamp when reviewer starts reviewing
     let _ = conn.execute("ALTER TABLE tasks ADD COLUMN started_review_at TEXT", []);
 
+    // v16: agent owner scoping
+    let _ = conn.execute("ALTER TABLE agents ADD COLUMN owner_id TEXT", []);
+
     conn
+}
+
+/// Create a SQLite-backed StorageBackend from a path.
+pub fn init_sqlite_storage(path: &str) -> std::sync::Arc<dyn crate::storage::StorageBackend> {
+    let conn = init_db(path);
+    let conn = std::sync::Arc::new(std::sync::Mutex::new(conn));
+    std::sync::Arc::new(crate::storage::sqlite::SqliteBackend::new(conn))
 }

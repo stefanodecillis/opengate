@@ -1,10 +1,8 @@
-use rusqlite::Connection;
-
-use crate::db_ops;
+use crate::storage::StorageBackend;
 use opengate_models::{Identity, PendingNotifWebhook, Task};
 
 pub fn emit_task_event(
-    conn: &Connection,
+    storage: &dyn StorageBackend,
     identity: &Identity,
     event_type: &str,
     task: &Task,
@@ -20,8 +18,8 @@ pub fn emit_task_event(
         }
     });
 
-    db_ops::emit_event(
-        conn,
+    storage.emit_event(
+        None,
         event_type,
         Some(&task.id),
         &task.project_id,
@@ -32,7 +30,7 @@ pub fn emit_task_event(
 }
 
 pub fn emit_knowledge_updated(
-    conn: &Connection,
+    storage: &dyn StorageBackend,
     identity: &Identity,
     project_id: &str,
     key: &str,
@@ -51,8 +49,8 @@ pub fn emit_knowledge_updated(
         "action": action,
     });
 
-    db_ops::emit_event(
-        conn,
+    storage.emit_event(
+        None,
         "knowledge.updated",
         None,
         project_id,
@@ -61,4 +59,3 @@ pub fn emit_knowledge_updated(
         &payload,
     )
 }
-

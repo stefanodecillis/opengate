@@ -212,6 +212,8 @@ pub struct Agent {
     pub stale_timeout: i64,
     pub last_seen_at: Option<String>,
     pub created_at: String,
+    /// Optional owner (e.g. Clerk user_id). None in standalone OSS mode.
+    pub owner_id: Option<String>,
 }
 
 // --- DTOs ---
@@ -293,6 +295,7 @@ pub struct CreateAgent {
     pub capabilities: Option<Vec<String>>,
     pub seniority: Option<String>,
     pub role: Option<String>,
+    pub owner_id: Option<String>,
 }
 
 impl CreateAgent {
@@ -307,6 +310,7 @@ impl CreateAgent {
             capabilities: None,
             seniority: None,
             role: None,
+            owner_id: None,
         }
     }
 
@@ -340,6 +344,7 @@ pub struct RegisterAgentRequest {
     pub provider: Option<String>,
     pub cost_tier: Option<String>,
     pub capabilities: Option<Vec<String>>,
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,6 +440,9 @@ pub enum Identity {
         id: String,
         name: String,
     },
+    Human {
+        id: String,
+    },
     Anonymous,
 }
 
@@ -442,6 +450,7 @@ impl Identity {
     pub fn author_type(&self) -> &'static str {
         match self {
             Identity::AgentIdentity { .. } => "agent",
+            Identity::Human { .. } => "human",
             Identity::Anonymous => "system",
         }
     }
@@ -449,6 +458,7 @@ impl Identity {
     pub fn author_id(&self) -> &str {
         match self {
             Identity::AgentIdentity { id, .. } => id,
+            Identity::Human { id } => id,
             Identity::Anonymous => "system",
         }
     }
@@ -456,6 +466,7 @@ impl Identity {
     pub fn display_name(&self) -> &str {
         match self {
             Identity::AgentIdentity { name, .. } => name,
+            Identity::Human { id } => id,
             Identity::Anonymous => "system",
         }
     }

@@ -3,10 +3,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use rusqlite::Connection;
 
 use crate::app::AppState;
-use crate::db_ops;
+use crate::storage::StorageBackend;
 use opengate_models::*;
 
 // ===== Management endpoints (require auth) =====
@@ -18,20 +17,16 @@ pub async fn create_trigger(
     Path(project_id): Path<String>,
     Json(body): Json<CreateTriggerRequest>,
 ) -> Result<(StatusCode, Json<TriggerCreatedResponse>), StatusCode> {
-    // Validate action_type
     if body.action_type != "create_task" {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    let conn = state.db.lock().unwrap();
-
-    // Validate project exists
-    if db_ops::get_project(&conn, &project_id).is_none() {
+    if state.storage.get_project(None, &project_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    let (trigger, secret) = db_ops::create_webhook_trigger(
-        &conn,
+    let (trigger, secret) = state.storage.create_webhook_trigger(
+        None,
         &project_id,
         &body.name,
         &body.action_type,
@@ -50,13 +45,10 @@ pub async fn list_triggers(
     _identity: Identity,
     Path(project_id): Path<String>,
 ) -> Result<Json<Vec<WebhookTrigger>>, StatusCode> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_project(&conn, &project_id).is_none() {
+    if state.storage.get_project(None, &project_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-
-    Ok(Json(db_ops::list_webhook_triggers(&conn, &project_id)))
+    Ok(Json(state.storage.list_webhook_triggers(None, &project_id)))
 }
 
 /// DELETE /api/projects/:id/triggers/:tid
@@ -65,13 +57,10 @@ pub async fn delete_trigger(
     _identity: Identity,
     Path((project_id, trigger_id)): Path<(String, String)>,
 ) -> StatusCode {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_project(&conn, &project_id).is_none() {
+    if state.storage.get_project(None, &project_id).is_none() {
         return StatusCode::NOT_FOUND;
     }
-
-    if db_ops::delete_webhook_trigger(&conn, &trigger_id) {
+    if state.storage.delete_webhook_trigger(None, &trigger_id) {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -84,28 +73,21 @@ pub async fn list_trigger_logs(
     _identity: Identity,
     Path((project_id, trigger_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<WebhookTriggerLog>>, StatusCode> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_project(&conn, &project_id).is_none() {
+    if state.storage.get_project(None, &project_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-
-    Ok(Json(db_ops::list_trigger_logs(&conn, &trigger_id, 50)))
+    Ok(Json(state.storage.list_trigger_logs(None, &trigger_id, 50)))
 }
 
 // ===== Inbound webhook endpoint (no auth — validated by secret) =====
 
 /// POST /api/webhooks/trigger/:trigger_id
-///
-/// External systems call this endpoint. Must include:
-///   X-Webhook-Secret: <raw_secret>
 pub async fn receive_webhook(
     State(state): State<AppState>,
     Path(trigger_id): Path<String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Parse body as JSON
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
@@ -116,10 +98,7 @@ pub async fn receive_webhook(
         }
     };
 
-    let conn = state.db.lock().unwrap();
-
-    // Look up trigger (with secret hash for validation)
-    let (trigger, secret_hash) = match db_ops::get_webhook_trigger_for_validation(&conn, &trigger_id) {
+    let (trigger, secret_hash) = match state.storage.get_webhook_trigger_for_validation(None, &trigger_id) {
         Some(v) => v,
         None => {
             return (
@@ -136,17 +115,15 @@ pub async fn receive_webhook(
         );
     }
 
-    // Validate X-Webhook-Secret
     let provided_secret = headers
         .get("x-webhook-secret")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Compare SHA256(provided) against stored hash (constant-time via == on hex strings)
     let provided_hash = sha256_hex(provided_secret);
     if provided_hash != secret_hash {
-        db_ops::log_trigger_execution(
-            &conn,
+        state.storage.log_trigger_execution(
+            None,
             &trigger_id,
             "rejected",
             Some(&payload),
@@ -159,8 +136,7 @@ pub async fn receive_webhook(
         );
     }
 
-    // Execute action
-    let result = execute_trigger_action(&conn, &trigger, &payload);
+    let result = execute_trigger_action(&*state.storage, &trigger, &payload);
 
     let (status, status_str, result_val, error_str) = match result {
         Ok(val) => (StatusCode::OK, "success", Some(val), None),
@@ -172,8 +148,8 @@ pub async fn receive_webhook(
         ),
     };
 
-    db_ops::log_trigger_execution(
-        &conn,
+    state.storage.log_trigger_execution(
+        None,
         &trigger_id,
         status_str,
         Some(&payload),
@@ -189,10 +165,8 @@ pub async fn receive_webhook(
     (status, Json(response))
 }
 
-/// Interpolate `{{payload.field}}` and `{{payload.nested.field}}` templates.
 fn interpolate(template: &str, payload: &serde_json::Value) -> String {
     let mut result = template.to_string();
-    // Find all {{payload.xxx}} placeholders
     let mut i = 0;
     while let Some(start) = result[i..].find("{{") {
         let abs_start = i + start;
@@ -214,7 +188,6 @@ fn interpolate(template: &str, payload: &serde_json::Value) -> String {
     result
 }
 
-/// Resolve a dot-separated path into a JSON value, returning a string representation.
 fn resolve_path(val: &serde_json::Value, path: &str) -> Option<String> {
     let mut current = val;
     for key in path.split('.') {
@@ -244,18 +217,18 @@ fn sha256_hex(input: &str) -> String {
 }
 
 fn execute_trigger_action(
-    conn: &Connection,
+    storage: &dyn StorageBackend,
     trigger: &WebhookTrigger,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match trigger.action_type.as_str() {
-        "create_task" => execute_create_task(conn, trigger, payload),
+        "create_task" => execute_create_task(storage, trigger, payload),
         other => Err(format!("Unknown action_type: {}", other)),
     }
 }
 
 fn execute_create_task(
-    conn: &Connection,
+    storage: &dyn StorageBackend,
     trigger: &WebhookTrigger,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
@@ -278,14 +251,12 @@ fn execute_create_task(
             .collect()
     });
 
-    // Assign-to strategy
     let (assignee_type, assignee_id) = match cfg.get("assign_to") {
         Some(strategy) if !strategy.is_null() => {
             let strategy_str = strategy.to_string();
-            let parsed: Option<AssignStrategy> =
-                serde_json::from_str(&strategy_str).ok();
+            let parsed: Option<AssignStrategy> = serde_json::from_str(&strategy_str).ok();
             match parsed {
-                Some(s) => match db_ops::find_best_agent(conn, &s) {
+                Some(s) => match storage.find_best_agent(None, &s) {
                     Some(agent_id) => (Some("agent".to_string()), Some(agent_id)),
                     None => (None, None),
                 },
@@ -309,11 +280,10 @@ fn execute_create_task(
         recurrence_rule: None,
     };
 
-    let task = db_ops::create_task(conn, &trigger.project_id, &create_input, "system");
+    let task = storage.create_task(None, &trigger.project_id, &create_input, "system");
     Ok(serde_json::json!({
         "task_id": task.id,
         "task_title": task.title,
         "status": task.status
     }))
 }
-

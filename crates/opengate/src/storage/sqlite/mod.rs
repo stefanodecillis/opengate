@@ -152,6 +152,9 @@ impl AgentStore for SqliteBackend {
     fn list_agents(&self, _tenant: Option<&str>) -> Vec<Agent> {
         db_ops::list_agents(&self.lock())
     }
+    fn list_agents_by_owner(&self, _tenant: Option<&str>, owner_id: &str) -> Vec<Agent> {
+        db_ops::list_agents_by_owner(&self.lock(), owner_id)
+    }
     fn update_agent(&self, _tenant: Option<&str>, id: &str, input: &UpdateAgent) -> Option<Agent> {
         db_ops::update_agent(&self.lock(), id, input)
     }
@@ -259,6 +262,9 @@ impl QuestionStore for SqliteBackend {
 impl EventStore for SqliteBackend {
     fn emit_event(&self, _tenant: Option<&str>, event_type: &str, task_id: Option<&str>, project_id: &str, actor_type: &str, actor_id: &str, payload: &serde_json::Value) -> Vec<PendingNotifWebhook> {
         db_ops::emit_event(&self.lock(), event_type, task_id, project_id, actor_type, actor_id, payload)
+    }
+    fn get_last_event_id(&self, _tenant: Option<&str>) -> i64 {
+        self.lock().query_row("SELECT MAX(id) FROM events", [], |row| row.get::<_, i64>(0)).unwrap_or(0)
     }
     fn insert_question_notification(&self, _tenant: Option<&str>, agent_id: &str, event_id: i64, event_type: &str, title: &str, body: Option<&str>) -> PendingNotifWebhook {
         db_ops::insert_question_notification(&self.lock(), agent_id, event_id, event_type, title, body)

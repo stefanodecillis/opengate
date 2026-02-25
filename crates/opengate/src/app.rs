@@ -3,18 +3,17 @@ use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
-use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::db;
-use crate::db_ops;
 use crate::handlers;
+use crate::storage::StorageBackend;
 use opengate_models::CreateActivity;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Arc<Mutex<Connection>>,
+    pub storage: Arc<dyn StorageBackend>,
     pub setup_token: String,
 }
 
@@ -253,29 +252,30 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
-    let conn = db::init_db(db_path);
+    // Keep raw connection for WAL checkpoint on shutdown (SQLite-only behavior)
+    let raw_conn = Arc::new(Mutex::new(db::init_db(db_path)));
+    let storage = Arc::new(crate::storage::sqlite::SqliteBackend::new(raw_conn.clone()))
+        as Arc<dyn StorageBackend>;
+
     let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+        storage: storage.clone(),
         setup_token: setup_token.to_string(),
     };
 
     // Spawn background stale agent cleanup (with startup grace period)
-    let bg_state = state.clone();
+    let bg_storage = storage.clone();
     tokio::spawn(async move {
-        // Grace period: wait 5 minutes after startup before first stale check
-        // This prevents false positives when agents haven't had time to heartbeat after a restart
         tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-            let conn = bg_state.db.lock().unwrap();
-            let released = db_ops::release_stale_tasks(&conn, 30);
+            let released = bg_storage.release_stale_tasks(None, 30);
             for task in &released {
                 eprintln!(
                     "[cleanup] Auto-released stale task: {} ({})",
                     task.id, task.title
                 );
-                db_ops::create_activity(
-                    &conn,
+                bg_storage.create_activity(
+                    None,
                     &task.id,
                     "system",
                     "system",
@@ -291,22 +291,21 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
 
     // Spawn background scheduled-task promoter
     {
-        let db2 = state.db.clone();
+        let sched_storage = storage.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                let conn = db2.lock().unwrap();
-                let count = db_ops::transition_ready_scheduled_tasks(&conn);
+                let count = sched_storage.transition_ready_scheduled_tasks(None);
                 if count > 0 {
-                    eprintln!("[scheduler] Promoted {} scheduled task(s) backlog→todo", count);
+                    eprintln!("[scheduler] Promoted {} scheduled task(s) backlog\u{2192}todo", count);
                 }
             }
         });
     }
 
-    // Graceful shutdown: checkpoint WAL on SIGTERM/SIGINT
-    let shutdown_db = state.db.clone();
+    // Graceful shutdown: checkpoint WAL on SIGTERM/SIGINT (SQLite-only)
+    let shutdown_conn = raw_conn.clone();
     let shutdown_signal = async move {
         let ctrl_c = tokio::signal::ctrl_c();
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -315,8 +314,7 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
             _ = ctrl_c => eprintln!("[shutdown] Received SIGINT"),
             _ = sigterm.recv() => eprintln!("[shutdown] Received SIGTERM"),
         }
-        // Checkpoint WAL before exit to prevent data loss on restart
-        let conn = shutdown_db.lock().unwrap();
+        let conn = shutdown_conn.lock().unwrap();
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
             .unwrap_or_else(|e| eprintln!("[shutdown] WAL checkpoint failed: {}", e));
         eprintln!("[shutdown] WAL checkpointed, shutting down gracefully");
@@ -334,4 +332,3 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
         .await
         .expect("Server error");
 }
-

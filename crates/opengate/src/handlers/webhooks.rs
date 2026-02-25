@@ -1,31 +1,25 @@
-use crate::db_ops;
+use crate::storage::StorageBackend;
 use opengate_models::*;
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Fire webhook notifications for a list of pending notification webhooks.
-/// Called after the DB lock has been dropped so we can re-acquire it in the spawned task.
-pub fn fire_notification_webhooks(db: Arc<Mutex<Connection>>, pending: Vec<PendingNotifWebhook>) {
+pub fn fire_notification_webhooks(storage: Arc<dyn StorageBackend>, pending: Vec<PendingNotifWebhook>) {
     for notif in pending {
-        // Look up agent webhook info while holding the lock briefly.
-        let (webhook_url, webhook_events) = {
-            let conn = db.lock().unwrap();
-            match db_ops::get_agent(&conn, &notif.agent_id) {
-                Some(agent) => (agent.webhook_url, agent.webhook_events),
-                None => continue,
-            }
+        let agent = match storage.get_agent(None, &notif.agent_id) {
+            Some(a) => a,
+            None => continue,
         };
+        let webhook_url = agent.webhook_url.clone();
+        let webhook_events = agent.webhook_events.clone();
 
         let url = match webhook_url {
             Some(u) if !u.is_empty() => u,
-            _ => continue, // No webhook URL configured
+            _ => continue,
         };
 
-        // Apply webhook_events filter: if the agent has subscribed to specific event types,
-        // only fire if this event type is in the list. null/empty = all events.
         if let Some(ref events) = webhook_events {
             if !events.is_empty() && !events.iter().any(|e| e == &notif.event_type) {
-                continue; // Event type not subscribed
+                continue;
             }
         }
 
@@ -38,7 +32,7 @@ pub fn fire_notification_webhooks(db: Arc<Mutex<Connection>>, pending: Vec<Pendi
             "timestamp": chrono::Utc::now().to_rfc3339()
         });
 
-        let db_clone = db.clone();
+        let storage_clone = storage.clone();
         let notification_id = notif.notification_id;
         let agent_id = notif.agent_id.clone();
 
@@ -58,41 +52,24 @@ pub fn fire_notification_webhooks(db: Arc<Mutex<Connection>>, pending: Vec<Pendi
                     Ok(resp) => {
                         let status_code = resp.status().as_u16();
                         let success = (200..300).contains(&status_code);
-                        let _ = resp.text().await; // consume body
+                        let _ = resp.text().await;
                         if success {
-                            // Auto-ack: mark notification as read and record "delivered"
-                            let conn = db_clone.lock().unwrap();
-                            db_ops::ack_notification_system(&conn, notification_id);
-                            db_ops::update_notification_webhook_status(
-                                &conn,
-                                notification_id,
-                                "delivered",
-                            );
+                            storage_clone.ack_notification_system(None, notification_id);
+                            storage_clone.update_notification_webhook_status(None, notification_id, "delivered");
                             eprintln!(
                                 "[webhook] notif {} delivered to agent {}, auto-acked",
                                 notification_id, agent_id
                             );
                             return;
                         }
-                        // Non-2xx response; retry
                         if attempt == max_attempts {
-                            let conn = db_clone.lock().unwrap();
-                            db_ops::update_notification_webhook_status(
-                                &conn,
-                                notification_id,
-                                "failed",
-                            );
+                            storage_clone.update_notification_webhook_status(None, notification_id, "failed");
                             eprintln!("[webhook] notif {} failed for agent {} (HTTP {}); left unread for polling", notification_id, agent_id, status_code);
                         }
                     }
                     Err(e) => {
                         if attempt == max_attempts {
-                            let conn = db_clone.lock().unwrap();
-                            db_ops::update_notification_webhook_status(
-                                &conn,
-                                notification_id,
-                                "failed",
-                            );
+                            storage_clone.update_notification_webhook_status(None, notification_id, "failed");
                             eprintln!("[webhook] notif {} failed for agent {} ({}); left unread for polling", notification_id, agent_id, e);
                         }
                     }
@@ -110,9 +87,8 @@ pub fn fire_notification_webhooks(db: Arc<Mutex<Connection>>, pending: Vec<Pendi
 }
 
 /// Fire a webhook event to an agent's webhook_url
-pub fn fire_webhook(db: Arc<Mutex<Connection>>, agent_id: &str, event_type: &str, task: &Task) {
-    let conn = db.lock().unwrap();
-    let agent = match db_ops::get_agent(&conn, agent_id) {
+pub fn fire_webhook(storage: Arc<dyn StorageBackend>, agent_id: &str, event_type: &str, task: &Task) {
+    let agent = match storage.get_agent(None, agent_id) {
         Some(a) => a,
         None => return,
     };
@@ -128,11 +104,9 @@ pub fn fire_webhook(db: Arc<Mutex<Connection>>, agent_id: &str, event_type: &str
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
-    let log_id = db_ops::create_webhook_log(&conn, agent_id, event_type, &payload);
-    drop(conn);
+    let log_id = storage.create_webhook_log(None, agent_id, event_type, &payload);
 
-    // Fire in background with retry
-    let db_clone = db.clone();
+    let storage_clone = storage.clone();
     let log_id_clone = log_id;
     let url = webhook_url;
     let payload_clone = payload;
@@ -158,9 +132,8 @@ pub fn fire_webhook(db: Arc<Mutex<Connection>>, agent_id: &str, event_type: &str
                     } else {
                         "failed"
                     };
-                    let conn = db_clone.lock().unwrap();
-                    db_ops::update_webhook_log(
-                        &conn,
+                    storage_clone.update_webhook_log(
+                        None,
                         &log_id_clone,
                         delivery_status,
                         attempt,
@@ -173,14 +146,13 @@ pub fn fire_webhook(db: Arc<Mutex<Connection>>, agent_id: &str, event_type: &str
                 }
                 Err(e) => {
                     let err_str: String = e.to_string();
-                    let conn = db_clone.lock().unwrap();
                     let delivery_status = if attempt == max_attempts {
                         "failed"
                     } else {
                         "pending"
                     };
-                    db_ops::update_webhook_log(
-                        &conn,
+                    storage_clone.update_webhook_log(
+                        None,
                         &log_id_clone,
                         delivery_status,
                         attempt,
@@ -201,35 +173,35 @@ pub fn fire_webhook(db: Arc<Mutex<Connection>>, agent_id: &str, event_type: &str
 }
 
 /// Fire webhook events related to task assignment
-pub fn fire_assignment_webhook(db: Arc<Mutex<Connection>>, task: &Task) {
+pub fn fire_assignment_webhook(storage: Arc<dyn StorageBackend>, task: &Task) {
     if let Some(ref agent_id) = task.assignee_id {
         if task.assignee_type.as_deref() == Some("agent") {
-            fire_webhook(db, agent_id, "task.assigned", task);
+            fire_webhook(storage, agent_id, "task.assigned", task);
         }
     }
 }
 
 /// Fire webhook when task is updated
-pub fn fire_update_webhook(db: Arc<Mutex<Connection>>, task: &Task) {
+pub fn fire_update_webhook(storage: Arc<dyn StorageBackend>, task: &Task) {
     if let Some(ref agent_id) = task.assignee_id {
         if task.assignee_type.as_deref() == Some("agent") {
-            fire_webhook(db, agent_id, "task.updated", task);
+            fire_webhook(storage, agent_id, "task.updated", task);
         }
     }
 }
 
 /// Fire webhook when dependencies are ready
-pub fn fire_dependency_ready_webhook(db: Arc<Mutex<Connection>>, task: &Task) {
+pub fn fire_dependency_ready_webhook(storage: Arc<dyn StorageBackend>, task: &Task) {
     if let Some(ref agent_id) = task.assignee_id {
         if task.assignee_type.as_deref() == Some("agent") {
-            fire_webhook(db, agent_id, "task.dependency_ready", task);
+            fire_webhook(storage, agent_id, "task.dependency_ready", task);
         }
     }
 }
 
 /// Fire webhook to reviewer when task enters review
-pub fn fire_review_requested_webhook(db: Arc<Mutex<Connection>>, task: &Task) {
+pub fn fire_review_requested_webhook(storage: Arc<dyn StorageBackend>, task: &Task) {
     if let Some(ref reviewer_id) = task.reviewer_id {
-        fire_webhook(db, reviewer_id, "task.review_requested", task);
+        fire_webhook(storage, reviewer_id, "task.review_requested", task);
     }
 }

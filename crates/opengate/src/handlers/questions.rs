@@ -5,7 +5,6 @@ use axum::{
 };
 
 use crate::app::AppState;
-use crate::db_ops;
 use crate::handlers::webhooks;
 use opengate_models::*;
 
@@ -16,15 +15,13 @@ pub async fn create_question(
     Path(task_id): Path<String>,
     Json(input): Json<CreateQuestion>,
 ) -> Result<(StatusCode, Json<TaskQuestion>), (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
 
-    let question = db_ops::create_question(
-        &conn,
+    let question = state.storage.create_question(
+        None,
         &task_id,
         &input,
         identity.author_type(),
@@ -34,7 +31,7 @@ pub async fn create_question(
     // Auto-targeting: if required_capability is set but no explicit target, find matches
     let auto_targets = if question.target_id.is_none() {
         if let Some(ref cap) = question.required_capability {
-            Some(db_ops::auto_target_question(&conn, &question.id, cap))
+            Some(state.storage.auto_target_question(None, &question.id, cap))
         } else {
             None
         }
@@ -44,7 +41,7 @@ pub async fn create_question(
 
     // Re-fetch question after auto-targeting may have updated target_type/target_id
     let question = if auto_targets.is_some() {
-        db_ops::get_question(&conn, &question.id).unwrap_or(question)
+        state.storage.get_question(None, &question.id).unwrap_or(question)
     } else {
         question
     };
@@ -59,8 +56,8 @@ pub async fn create_question(
         "target_type": question.target_type,
         "target_id": question.target_id,
     });
-    let mut pending = db_ops::emit_event(
-        &conn,
+    let mut pending = state.storage.emit_event(
+        None,
         "task.question_asked",
         Some(&task_id),
         &task.project_id,
@@ -71,19 +68,17 @@ pub async fn create_question(
 
     // Handle auto-targeting notification scenarios
     if let Some(targets) = auto_targets {
-        let event_id = conn
-            .query_row("SELECT MAX(id) FROM events", [], |row| row.get::<_, i64>(0))
-            .unwrap_or(0);
+        let event_id = state.storage.get_last_event_id(None);
         let question_preview: String = question.question.chars().take(200).collect();
         let task_title = &task.title;
 
         match targets.len() {
             0 => {
                 // No matches — notify task creator if they are an agent
-                if let Some(creator_agent) = db_ops::get_agent(&conn, &task.created_by) {
+                if let Some(creator_agent) = state.storage.get_agent(None, &task.created_by) {
                     if creator_agent.id != identity.author_id() {
-                        pending.push(db_ops::insert_question_notification(
-                            &conn,
+                        pending.push(state.storage.insert_question_notification(
+                            None,
                             &creator_agent.id,
                             event_id,
                             "question_asked",
@@ -101,16 +96,14 @@ pub async fn create_question(
                 // Single match — notification already handled by route_event_notifications
                 // (since auto_target_question set the target_type/target_id, and emit_event
                 // was called after re-fetch, the standard routing will have fired).
-                // But we need to check: the emit_event payload had the updated target,
-                // so route_event_notifications should have already created the notification.
                 // Nothing extra needed here.
             }
             _ => {
                 // Multiple matches — notify ALL targets, first to answer wins
                 for target in &targets {
                     if target.target_type == "agent" {
-                        pending.push(db_ops::insert_question_notification(
-                            &conn,
+                        pending.push(state.storage.insert_question_notification(
+                            None,
                             &target.target_id,
                             event_id,
                             "question_asked",
@@ -125,8 +118,7 @@ pub async fn create_question(
         }
     }
 
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok((StatusCode::CREATED, Json(question)))
 }
@@ -138,16 +130,14 @@ pub async fn list_questions(
     Path(task_id): Path<String>,
     Query(query): Query<QuestionQuery>,
 ) -> Result<Json<Vec<TaskQuestion>>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_task(&conn, &task_id).is_none() {
+    if state.storage.get_task(None, &task_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let questions = db_ops::list_questions(&conn, &task_id, query.status.as_deref());
+    let questions = state.storage.list_questions(None, &task_id, query.status.as_deref());
     Ok(Json(questions))
 }
 
@@ -157,16 +147,14 @@ pub async fn get_question(
     _identity: Identity,
     Path((task_id, question_id)): Path<(String, String)>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_task(&conn, &task_id).is_none() {
+    if state.storage.get_task(None, &task_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let question = db_ops::get_question(&conn, &question_id).ok_or((
+    let question = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -188,15 +176,13 @@ pub async fn resolve_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<ResolveQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
 
     // Verify question belongs to this task
-    let existing = db_ops::get_question(&conn, &question_id).ok_or((
+    let existing = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -207,8 +193,8 @@ pub async fn resolve_question(
         ));
     }
 
-    let question = db_ops::resolve_question(
-        &conn,
+    let question = state.storage.resolve_question(
+        None,
         &question_id,
         &input.resolution,
         identity.author_type(),
@@ -228,8 +214,8 @@ pub async fn resolve_question(
         "asked_by_type": existing.asked_by_type,
         "asked_by_id": existing.asked_by_id,
     });
-    let mut pending = db_ops::emit_event(
-        &conn,
+    let mut pending = state.storage.emit_event(
+        None,
         "task.question_resolved",
         Some(&task_id),
         &task.project_id,
@@ -240,9 +226,7 @@ pub async fn resolve_question(
 
     // Notify the original question asker if they are an agent and not the resolver
     if existing.asked_by_type == "agent" && existing.asked_by_id != identity.author_id() {
-        let event_id = conn
-            .query_row("SELECT MAX(id) FROM events", [], |row| row.get::<_, i64>(0))
-            .unwrap_or(0);
+        let event_id = state.storage.get_last_event_id(None);
         let resolution_preview: String = question
             .resolution
             .as_deref()
@@ -250,8 +234,8 @@ pub async fn resolve_question(
             .chars()
             .take(150)
             .collect();
-        pending.push(db_ops::insert_question_notification(
-            &conn,
+        pending.push(state.storage.insert_question_notification(
+            None,
             &existing.asked_by_id,
             event_id,
             "question_resolved",
@@ -264,8 +248,7 @@ pub async fn resolve_question(
         ));
     }
 
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok(Json(question))
 }
@@ -286,8 +269,7 @@ pub async fn my_questions(
         }
     };
 
-    let conn = state.db.lock().unwrap();
-    let questions = db_ops::list_questions_for_agent(&conn, &agent_id, query.status.as_deref());
+    let questions = state.storage.list_questions_for_agent(None, &agent_id, query.status.as_deref());
     Ok(Json(questions))
 }
 
@@ -298,9 +280,7 @@ pub async fn project_questions(
     Path(project_id): Path<String>,
     Query(query): Query<QuestionQuery>,
 ) -> Result<Json<Vec<TaskQuestion>>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_project(&conn, &project_id).is_none() {
+    if state.storage.get_project(None, &project_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
@@ -309,7 +289,7 @@ pub async fn project_questions(
 
     let unrouted = query.unrouted.unwrap_or(false);
     let questions =
-        db_ops::list_questions_for_project(&conn, &project_id, query.status.as_deref(), unrouted);
+        state.storage.list_questions_for_project(None, &project_id, query.status.as_deref(), unrouted);
     Ok(Json(questions))
 }
 
@@ -320,13 +300,11 @@ pub async fn create_reply(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<CreateReply>,
 ) -> Result<(StatusCode, Json<QuestionReply>), (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
-    let question = db_ops::get_question(&conn, &question_id).ok_or((
+    let question = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -338,8 +316,8 @@ pub async fn create_reply(
     }
 
     let is_resolution = input.is_resolution.unwrap_or(false);
-    let reply = db_ops::create_reply(
-        &conn,
+    let reply = state.storage.create_reply(
+        None,
         &question_id,
         &input,
         identity.author_type(),
@@ -362,8 +340,8 @@ pub async fn create_reply(
         "asked_by_type": question.asked_by_type,
         "asked_by_id": question.asked_by_id,
     });
-    let mut pending = db_ops::emit_event(
-        &conn,
+    let mut pending = state.storage.emit_event(
+        None,
         event_type,
         Some(&task_id),
         &task.project_id,
@@ -373,9 +351,7 @@ pub async fn create_reply(
     );
 
     // Notify question asker + all thread participants (agents) about replies
-    let event_id = conn
-        .query_row("SELECT MAX(id) FROM events", [], |row| row.get::<_, i64>(0))
-        .unwrap_or(0);
+    let event_id = state.storage.get_last_event_id(None);
     let reply_preview: String = reply.body.chars().take(150).collect();
     let actor_name = identity.display_name();
     let notif_type = if is_resolution { "question_resolved" } else { "question_replied" };
@@ -394,7 +370,7 @@ pub async fn create_reply(
     }
 
     // Notify all previous reply authors who are agents (thread participants)
-    let all_replies = db_ops::list_replies(&conn, &question_id);
+    let all_replies = state.storage.list_replies(None, &question_id);
     for r in &all_replies {
         if r.author_type == "agent" && r.author_id != identity.author_id() {
             notified_agents.insert(r.author_id.clone());
@@ -409,8 +385,8 @@ pub async fn create_reply(
     }
 
     for agent_id in &notified_agents {
-        pending.push(db_ops::insert_question_notification(
-            &conn,
+        pending.push(state.storage.insert_question_notification(
+            None,
             agent_id,
             event_id,
             notif_type,
@@ -419,8 +395,7 @@ pub async fn create_reply(
         ));
     }
 
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok((StatusCode::CREATED, Json(reply)))
 }
@@ -431,15 +406,13 @@ pub async fn list_replies(
     _identity: Identity,
     Path((task_id, question_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<QuestionReply>>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_task(&conn, &task_id).is_none() {
+    if state.storage.get_task(None, &task_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
-    let question = db_ops::get_question(&conn, &question_id).ok_or((
+    let question = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -450,7 +423,7 @@ pub async fn list_replies(
         ));
     }
 
-    let replies = db_ops::list_replies(&conn, &question_id);
+    let replies = state.storage.list_replies(None, &question_id);
     Ok(Json(replies))
 }
 
@@ -461,13 +434,11 @@ pub async fn dismiss_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<DismissQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
-    let existing = db_ops::get_question(&conn, &question_id).ok_or((
+    let existing = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -478,7 +449,7 @@ pub async fn dismiss_question(
         ));
     }
 
-    let question = db_ops::dismiss_question(&conn, &question_id, &input.reason).ok_or((
+    let question = state.storage.dismiss_question(None, &question_id, &input.reason).ok_or((
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({"error": "Question is not open"})),
     ))?;
@@ -489,8 +460,8 @@ pub async fn dismiss_question(
         "question_id": question_id,
         "reason": input.reason,
     });
-    let pending = db_ops::emit_event(
-        &conn,
+    let pending = state.storage.emit_event(
+        None,
         "task.question_dismissed",
         Some(&task_id),
         &task.project_id,
@@ -498,8 +469,7 @@ pub async fn dismiss_question(
         identity.author_id(),
         &payload,
     );
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok(Json(question))
 }
@@ -511,13 +481,11 @@ pub async fn assign_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<AssignQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
-    let existing = db_ops::get_question(&conn, &question_id).ok_or((
+    let existing = state.storage.get_question(None, &question_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Question not found"})),
     ))?;
@@ -528,7 +496,7 @@ pub async fn assign_question(
         ));
     }
 
-    let question = db_ops::assign_question(&conn, &question_id, &input.target_type, &input.target_id)
+    let question = state.storage.assign_question(None, &question_id, &input.target_type, &input.target_id)
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "Failed to assign question"})),
@@ -543,8 +511,8 @@ pub async fn assign_question(
         "target_type": input.target_type,
         "target_id": input.target_id,
     });
-    let pending = db_ops::emit_event(
-        &conn,
+    let pending = state.storage.emit_event(
+        None,
         "task.question_assigned",
         Some(&task_id),
         &task.project_id,
@@ -552,8 +520,7 @@ pub async fn assign_question(
         identity.author_id(),
         &payload,
     );
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok(Json(question))
 }

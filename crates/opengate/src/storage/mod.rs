@@ -77,6 +77,7 @@ pub trait AgentStore: Send + Sync {
     fn get_agent(&self, tenant: Option<&str>, id: &str) -> Option<Agent>;
     fn get_agent_by_key_hash(&self, tenant: Option<&str>, hash: &str) -> Option<Agent>;
     fn list_agents(&self, tenant: Option<&str>) -> Vec<Agent>;
+    fn list_agents_by_owner(&self, tenant: Option<&str>, owner_id: &str) -> Vec<Agent>;
     fn update_agent(&self, tenant: Option<&str>, id: &str, input: &UpdateAgent) -> Option<Agent>;
     fn delete_agent(&self, tenant: Option<&str>, id: &str) -> bool;
     fn update_heartbeat(&self, tenant: Option<&str>, agent_id: &str) -> bool;
@@ -124,6 +125,7 @@ pub trait QuestionStore: Send + Sync {
 pub trait EventStore: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     fn emit_event(&self, tenant: Option<&str>, event_type: &str, task_id: Option<&str>, project_id: &str, actor_type: &str, actor_id: &str, payload: &serde_json::Value) -> Vec<PendingNotifWebhook>;
+    fn get_last_event_id(&self, tenant: Option<&str>) -> i64;
     fn insert_question_notification(&self, tenant: Option<&str>, agent_id: &str, event_id: i64, event_type: &str, title: &str, body: Option<&str>) -> PendingNotifWebhook;
     fn list_notifications(&self, tenant: Option<&str>, agent_id: &str, unread: Option<bool>) -> Vec<Notification>;
     fn ack_notification(&self, tenant: Option<&str>, agent_id: &str, notification_id: i64) -> bool;

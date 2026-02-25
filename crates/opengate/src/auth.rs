@@ -5,7 +5,6 @@ use axum::{
 };
 
 use crate::app::AppState;
-use crate::db_ops;
 use opengate_models::Identity;
 
 // Axum extractor for Identity — always succeeds.
@@ -18,6 +17,11 @@ impl FromRequestParts<AppState> for Identity {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // If identity was pre-resolved by product middleware, use it directly
+        if let Some(identity) = parts.extensions.get::<Identity>() {
+            return Ok(identity.clone());
+        }
+
         let token = parts
             .headers
             .get("authorization")
@@ -25,10 +29,9 @@ impl FromRequestParts<AppState> for Identity {
             .and_then(|h| h.strip_prefix("Bearer ").map(|s| s.to_string()));
 
         if let Some(token) = token {
-            let hash = db_ops::hash_api_key(&token);
-            let conn = state.db.lock().unwrap();
-            if let Some(agent) = db_ops::get_agent_by_key_hash(&conn, &hash) {
-                db_ops::update_heartbeat(&conn, &agent.id);
+            let hash = state.storage.hash_api_key(&token);
+            if let Some(agent) = state.storage.get_agent_by_key_hash(None, &hash) {
+                state.storage.update_heartbeat(None, &agent.id);
                 return Ok(Identity::AgentIdentity {
                     id: agent.id,
                     name: agent.name,

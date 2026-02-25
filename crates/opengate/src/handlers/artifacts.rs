@@ -5,7 +5,6 @@ use axum::{
 };
 
 use crate::app::AppState;
-use crate::db_ops;
 use crate::handlers::webhooks;
 use opengate_models::*;
 
@@ -15,7 +14,6 @@ pub async fn create_artifact(
     Path(task_id): Path<String>,
     Json(input): Json<CreateArtifact>,
 ) -> Result<(StatusCode, Json<TaskArtifact>), (StatusCode, Json<serde_json::Value>)> {
-    // Validate artifact_type
     if !VALID_ARTIFACT_TYPES.contains(&input.artifact_type.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -29,7 +27,6 @@ pub async fn create_artifact(
         ));
     }
 
-    // Validate value length for text/json types
     if (input.artifact_type == "text" || input.artifact_type == "json") && input.value.len() > 65536
     {
         return Err((
@@ -40,30 +37,27 @@ pub async fn create_artifact(
         ));
     }
 
-    let conn = state.db.lock().unwrap();
-
-    let task = db_ops::get_task(&conn, &task_id).ok_or((
+    let task = state.storage.get_task(None, &task_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
 
-    let artifact = db_ops::create_artifact(
-        &conn,
+    let artifact = state.storage.create_artifact(
+        None,
         &task_id,
         &input,
         identity.author_type(),
         identity.author_id(),
     );
 
-    // Emit task.artifact_created event
     let payload = serde_json::json!({
         "task_title": task.title,
         "actor_name": identity.display_name(),
         "artifact_name": artifact.name,
         "artifact_type": artifact.artifact_type,
     });
-    let pending = db_ops::emit_event(
-        &conn,
+    let pending = state.storage.emit_event(
+        None,
         "task.artifact_created",
         Some(&task_id),
         &task.project_id,
@@ -71,8 +65,7 @@ pub async fn create_artifact(
         identity.author_id(),
         &payload,
     );
-    drop(conn);
-    webhooks::fire_notification_webhooks(state.db.clone(), pending);
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
 
     Ok((StatusCode::CREATED, Json(artifact)))
 }
@@ -82,16 +75,14 @@ pub async fn list_artifacts(
     _identity: Identity,
     Path(task_id): Path<String>,
 ) -> Result<Json<Vec<TaskArtifact>>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_task(&conn, &task_id).is_none() {
+    if state.storage.get_task(None, &task_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let artifacts = db_ops::list_artifacts(&conn, &task_id);
+    let artifacts = state.storage.list_artifacts(None, &task_id);
     Ok(Json(artifacts))
 }
 
@@ -100,21 +91,18 @@ pub async fn delete_artifact(
     identity: Identity,
     Path((task_id, artifact_id)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-
-    if db_ops::get_task(&conn, &task_id).is_none() {
+    if state.storage.get_task(None, &task_id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let artifact = db_ops::get_artifact(&conn, &artifact_id).ok_or((
+    let artifact = state.storage.get_artifact(None, &artifact_id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Artifact not found"})),
     ))?;
 
-    // Verify artifact belongs to this task
     if artifact.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -122,18 +110,15 @@ pub async fn delete_artifact(
         ));
     }
 
-    // Only the creator can delete
     let is_creator = artifact.created_by_type == identity.author_type()
         && artifact.created_by_id == identity.author_id();
     if !is_creator {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(
-                serde_json::json!({"error": "Only the artifact creator can delete artifacts"}),
-            ),
+            Json(serde_json::json!({"error": "Only the artifact creator can delete artifacts"})),
         ));
     }
 
-    db_ops::delete_artifact(&conn, &artifact_id);
+    state.storage.delete_artifact(None, &artifact_id);
     Ok(StatusCode::NO_CONTENT)
 }

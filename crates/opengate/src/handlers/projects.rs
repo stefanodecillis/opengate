@@ -6,7 +6,6 @@ use axum::{
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::db_ops;
 use opengate_models::*;
 
 #[derive(Deserialize)]
@@ -19,9 +18,7 @@ pub async fn list_projects(
     _identity: Identity,
     Query(query): Query<ProjectListQuery>,
 ) -> Json<Vec<Project>> {
-    let conn = state.db.lock().unwrap();
-    let projects = db_ops::list_projects(&conn, query.status.as_deref());
-    Json(projects)
+    Json(state.storage.list_projects(None, query.status.as_deref()))
 }
 
 pub async fn create_project(
@@ -29,8 +26,7 @@ pub async fn create_project(
     identity: Identity,
     Json(input): Json<CreateProject>,
 ) -> Result<(StatusCode, Json<Project>), (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    let project = db_ops::create_project(&conn, &input, identity.author_id());
+    let project = state.storage.create_project(None, &input, identity.author_id());
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -39,8 +35,7 @@ pub async fn get_project(
     _identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<ProjectWithStats>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    match db_ops::get_project_with_stats(&conn, &id) {
+    match state.storage.get_project_with_stats(None, &id) {
         Some(project) => Ok(Json(project)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -55,8 +50,7 @@ pub async fn update_project(
     Path(id): Path<String>,
     Json(input): Json<UpdateProject>,
 ) -> Result<Json<Project>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    match db_ops::update_project(&conn, &id, &input) {
+    match state.storage.update_project(None, &id, &input) {
         Some(project) => Ok(Json(project)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -70,9 +64,7 @@ pub async fn get_pulse(
     identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<PulseResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    // Verify project exists
-    if db_ops::get_project(&conn, &id).is_none() {
+    if state.storage.get_project(None, &id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
@@ -82,7 +74,7 @@ pub async fn get_pulse(
         Identity::AgentIdentity { id, .. } => Some(id.as_str()),
         _ => None,
     };
-    Ok(Json(db_ops::get_pulse(&conn, &id, caller_agent_id)))
+    Ok(Json(state.storage.get_pulse(None, &id, caller_agent_id)))
 }
 
 pub async fn archive_project(
@@ -90,8 +82,7 @@ pub async fn archive_project(
     _identity: Identity,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    if db_ops::archive_project(&conn, &id) {
+    if state.storage.archive_project(None, &id) {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -110,20 +101,18 @@ pub struct ScheduleQuery {
 }
 
 /// GET /api/projects/:id/schedule?from=ISO8601&to=ISO8601
-/// Returns tasks with scheduled_at within the given range.
 pub async fn get_schedule(
     State(state): State<AppState>,
     _identity: Identity,
     Path(id): Path<String>,
     Query(query): Query<ScheduleQuery>,
 ) -> Result<Json<Vec<ScheduledTaskEntry>>, (StatusCode, Json<serde_json::Value>)> {
-    let conn = state.db.lock().unwrap();
-    if db_ops::get_project(&conn, &id).is_none() {
+    if state.storage.get_project(None, &id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
         ));
     }
-    let entries = db_ops::get_schedule(&conn, &id, query.from.as_deref(), query.to.as_deref());
+    let entries = state.storage.get_schedule(None, &id, query.from.as_deref(), query.to.as_deref());
     Ok(Json(entries))
 }
