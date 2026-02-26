@@ -46,9 +46,9 @@ jobs:
           USE_CROSS: ${{ matrix.cross }}
         run: |
           if [ "$USE_CROSS" = "true" ]; then
-            cross build --release --target "$BUILD_TARGET" -p opengate
+            cross build --release --target "$BUILD_TARGET" -p opengate-core
           else
-            cargo build --release --target "$BUILD_TARGET" -p opengate
+            cargo build --release --target "$BUILD_TARGET" -p opengate-core
           fi
 
       - name: Package
