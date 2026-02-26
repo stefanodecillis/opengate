@@ -39,7 +39,9 @@ pub async fn create_task(
         ));
     }
 
-    let task = state.storage.create_task(None, &project_id, &input, identity.author_id());
+    let task = state
+        .storage
+        .create_task(None, &project_id, &input, identity.author_id());
 
     state.storage.create_activity(
         None,
@@ -208,7 +210,10 @@ pub async fn claim_task(
     let (agent_id, agent_name) = match &identity {
         Identity::AgentIdentity { id, name } => (id.clone(), name.clone()),
         Identity::Human { .. } | Identity::Anonymous => {
-            return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "API key required to claim tasks"}))));
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "API key required to claim tasks"})),
+            ));
         }
     };
 
@@ -277,7 +282,9 @@ pub async fn complete_task(
     if current_status != TaskStatus::InProgress && current_status != TaskStatus::Review {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": format!("Cannot complete task in '{}' status", task.status)})),
+            Json(
+                serde_json::json!({"error": format!("Cannot complete task in '{}' status", task.status)}),
+            ),
         ));
     }
 
@@ -476,7 +483,9 @@ pub async fn assign_task(
                 &CreateActivity {
                     content: format!(
                         "Task manually assigned to agent:{}",
-                        state.storage.get_agent(None, &input.agent_id)
+                        state
+                            .storage
+                            .get_agent(None, &input.agent_id)
                             .map(|a| a.name)
                             .unwrap_or_else(|| input.agent_id.clone())
                     ),
@@ -512,7 +521,13 @@ pub async fn handoff_task(
     Json(input): Json<HandoffRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let from_id = identity.author_id().to_string();
-    match state.storage.handoff_task(None, &id, &from_id, &input.to_agent_id, input.summary.as_deref()) {
+    match state.storage.handoff_task(
+        None,
+        &id,
+        &from_id,
+        &input.to_agent_id,
+        input.summary.as_deref(),
+    ) {
         Ok(task) => {
             webhooks::fire_assignment_webhook(state.storage.clone(), &task);
             Ok(Json(task))
@@ -532,7 +547,10 @@ pub async fn approve_task(
     Path(id): Path<String>,
     Json(input): Json<ApproveRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.approve_task(None, &id, identity.author_id(), input.comment.as_deref()) {
+    match state
+        .storage
+        .approve_task(None, &id, identity.author_id(), input.comment.as_deref())
+    {
         Ok(task) => {
             state.storage.inject_upstream_outputs(None, &task);
             let mut pending = state.storage.unblock_dependents_on_complete(None, &task.id);
@@ -566,7 +584,10 @@ pub async fn request_changes(
     Path(id): Path<String>,
     Json(input): Json<RequestChangesRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.request_changes(None, &id, identity.author_id(), &input.comment) {
+    match state
+        .storage
+        .request_changes(None, &id, identity.author_id(), &input.comment)
+    {
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
@@ -630,7 +651,10 @@ pub async fn start_review(
     identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.start_review_task(None, &id, identity.author_id(), identity.author_type()) {
+    match state
+        .storage
+        .start_review_task(None, &id, identity.author_id(), identity.author_type())
+    {
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,

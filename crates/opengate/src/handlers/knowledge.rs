@@ -20,7 +20,9 @@ pub async fn list_knowledge(
             Json(serde_json::json!({"error": "Project not found"})),
         ));
     }
-    let entries = state.storage.list_knowledge(None, &project_id, query.prefix.as_deref());
+    let entries = state
+        .storage
+        .list_knowledge(None, &project_id, query.prefix.as_deref());
     Ok(Json(entries))
 }
 
@@ -47,7 +49,10 @@ pub async fn search_knowledge(
         .collect();
 
     let q = query.q.as_deref().unwrap_or("");
-    let entries = state.storage.search_knowledge(None, &project_id, q, &tag_list, query.category.as_deref());
+    let entries =
+        state
+            .storage
+            .search_knowledge(None, &project_id, q, &tag_list, query.category.as_deref());
     Ok(Json(entries))
 }
 
@@ -78,7 +83,10 @@ pub async fn upsert_knowledge(
         ));
     }
 
-    let existed = state.storage.get_knowledge(None, &project_id, &key).is_some();
+    let existed = state
+        .storage
+        .get_knowledge(None, &project_id, &key)
+        .is_some();
     let entry = state.storage.upsert_knowledge(
         None,
         &project_id,

@@ -3,7 +3,10 @@ use opengate_models::*;
 use std::sync::Arc;
 
 /// Fire webhook notifications for a list of pending notification webhooks.
-pub fn fire_notification_webhooks(storage: Arc<dyn StorageBackend>, pending: Vec<PendingNotifWebhook>) {
+pub fn fire_notification_webhooks(
+    storage: Arc<dyn StorageBackend>,
+    pending: Vec<PendingNotifWebhook>,
+) {
     for notif in pending {
         let agent = match storage.get_agent(None, &notif.agent_id) {
             Some(a) => a,
@@ -55,7 +58,11 @@ pub fn fire_notification_webhooks(storage: Arc<dyn StorageBackend>, pending: Vec
                         let _ = resp.text().await;
                         if success {
                             storage_clone.ack_notification_system(None, notification_id);
-                            storage_clone.update_notification_webhook_status(None, notification_id, "delivered");
+                            storage_clone.update_notification_webhook_status(
+                                None,
+                                notification_id,
+                                "delivered",
+                            );
                             eprintln!(
                                 "[webhook] notif {} delivered to agent {}, auto-acked",
                                 notification_id, agent_id
@@ -63,13 +70,21 @@ pub fn fire_notification_webhooks(storage: Arc<dyn StorageBackend>, pending: Vec
                             return;
                         }
                         if attempt == max_attempts {
-                            storage_clone.update_notification_webhook_status(None, notification_id, "failed");
+                            storage_clone.update_notification_webhook_status(
+                                None,
+                                notification_id,
+                                "failed",
+                            );
                             eprintln!("[webhook] notif {} failed for agent {} (HTTP {}); left unread for polling", notification_id, agent_id, status_code);
                         }
                     }
                     Err(e) => {
                         if attempt == max_attempts {
-                            storage_clone.update_notification_webhook_status(None, notification_id, "failed");
+                            storage_clone.update_notification_webhook_status(
+                                None,
+                                notification_id,
+                                "failed",
+                            );
                             eprintln!("[webhook] notif {} failed for agent {} ({}); left unread for polling", notification_id, agent_id, e);
                         }
                     }
@@ -87,7 +102,12 @@ pub fn fire_notification_webhooks(storage: Arc<dyn StorageBackend>, pending: Vec
 }
 
 /// Fire a webhook event to an agent's webhook_url
-pub fn fire_webhook(storage: Arc<dyn StorageBackend>, agent_id: &str, event_type: &str, task: &Task) {
+pub fn fire_webhook(
+    storage: Arc<dyn StorageBackend>,
+    agent_id: &str,
+    event_type: &str,
+    task: &Task,
+) {
     let agent = match storage.get_agent(None, agent_id) {
         Some(a) => a,
         None => return,

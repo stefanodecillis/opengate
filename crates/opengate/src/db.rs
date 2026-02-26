@@ -202,7 +202,13 @@ pub fn init_db(path: &str) -> Connection {
 
     // v6: per-agent stale timeout (minutes)
     let _ = conn.execute(
-        "ALTER TABLE agents ADD COLUMN stale_timeout INTEGER NOT NULL DEFAULT 30",
+        "ALTER TABLE agents ADD COLUMN stale_timeout INTEGER NOT NULL DEFAULT 240",
+        [],
+    );
+
+    // Migrate existing agents from old 30-min default to new 4-hour default
+    let _ = conn.execute(
+        "UPDATE agents SET stale_timeout = 240 WHERE stale_timeout = 30",
         [],
     );
 
@@ -268,8 +274,9 @@ pub fn init_db(path: &str) -> Connection {
         );
         CREATE INDEX IF NOT EXISTS idx_usage_task ON task_usage(task_id);
         CREATE INDEX IF NOT EXISTS idx_usage_agent ON task_usage(agent_id);
-        "
-    ).expect("Failed to create task_usage table");
+        ",
+    )
+    .expect("Failed to create task_usage table");
 
     // v11: inbound webhook triggers
     conn.execute_batch(
@@ -296,8 +303,9 @@ pub fn init_db(path: &str) -> Connection {
             error TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_trigger_log_trigger ON webhook_trigger_logs(trigger_id);
-        "
-    ).expect("Failed to create webhook trigger tables");
+        ",
+    )
+    .expect("Failed to create webhook trigger tables");
 
     // v13: task questions system
     conn.execute_batch(

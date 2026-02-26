@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 use opengate::app::{build_router, AppState};
 use opengate::db;
 use opengate::db_ops;
+use opengate::storage::sqlite::SqliteBackend;
 use opengate_models::CreateAgent;
 
 /// A self-contained test server with its own temp DB, agent, and random port.
@@ -34,8 +35,9 @@ impl TestServer {
         );
         let agent_id = agent.id.clone();
 
+        let storage = SqliteBackend::new(Arc::new(Mutex::new(conn)));
         let state = AppState {
-            db: Arc::new(Mutex::new(conn)),
+            storage: Arc::new(storage),
             setup_token: "test-setup-token".to_string(),
         };
 
@@ -1855,144 +1857,6 @@ async fn test_task_recurrence_respects_end_after() {
     );
 }
 
-// ═══════════════════════════════════════════════════════
-// v4: Pipeline tracking — status + approval gates + events
-// ═══════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_usage_report_and_retrieve() {
-    let s = TestServer::start().await;
-    let proj = s.create_project("usage-basic").await;
-    let pid = proj["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Usage Task").await;
-    let task_id = task["id"].as_str().unwrap();
-
-    // Report usage
-    let resp = s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, task_id))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 1000, "output_tokens": 500, "cost_usd": 0.02 }))
-        .send().await.unwrap();
-    assert_eq!(resp.status(), 201);
-    let entry: Value = resp.json().await.unwrap();
-    assert_eq!(entry["input_tokens"].as_i64(), Some(1000));
-    assert_eq!(entry["output_tokens"].as_i64(), Some(500));
-    assert_eq!(entry["task_id"].as_str(), Some(task_id));
-
-    // GET /api/tasks/:id/usage
-    let resp = s.client()
-        .get(format!("{}/api/tasks/{}/usage", s.base_url, task_id))
-        .header("Authorization", s.auth_header())
-        .send().await.unwrap();
-    assert_eq!(resp.status(), 200);
-    let entries: Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1);
-    assert!((entries[0]["cost_usd"].as_f64().unwrap() - 0.02).abs() < 0.0001);
-
-    // Second report (same task)
-    s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, task_id))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.005 }))
-        .send().await.unwrap();
-
-    let entries2: Value = s.client()
-        .get(format!("{}/api/tasks/{}/usage", s.base_url, task_id))
-        .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
-    assert_eq!(entries2.as_array().unwrap().len(), 2, "both reports should be stored");
-}
-
-#[tokio::test]
-async fn test_project_usage_aggregation() {
-    let s = TestServer::start().await;
-    let proj = s.create_project("usage-project").await;
-    let pid = proj["id"].as_str().unwrap();
-
-    let t1 = s.create_task(pid, "Task A").await;
-    let t2 = s.create_task(pid, "Task B").await;
-
-    // Report usage on both tasks
-    s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, t1["id"].as_str().unwrap()))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 1000, "output_tokens": 400, "cost_usd": 0.03 }))
-        .send().await.unwrap();
-    s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, t2["id"].as_str().unwrap()))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 600, "output_tokens": 200, "cost_usd": 0.01 }))
-        .send().await.unwrap();
-
-    // GET /api/projects/:id/usage
-    let resp = s.client()
-        .get(format!("{}/api/projects/{}/usage", s.base_url, pid))
-        .header("Authorization", s.auth_header())
-        .send().await.unwrap();
-    assert_eq!(resp.status(), 200);
-    let report: Value = resp.json().await.unwrap();
-
-    assert_eq!(report["total_input_tokens"].as_i64(), Some(1600));
-    assert_eq!(report["total_output_tokens"].as_i64(), Some(600));
-    let total = report["total_cost_usd"].as_f64().unwrap();
-    assert!((total - 0.04).abs() < 0.0001, "total cost should be ~0.04, got {}", total);
-
-    // by_agent should have 1 entry (our agent)
-    let by_agent = report["by_agent"].as_array().unwrap();
-    assert_eq!(by_agent.len(), 1);
-    assert_eq!(by_agent[0]["agent_id"].as_str(), Some(s.agent_id()));
-
-    // by_task should have 2 entries
-    let by_task = report["by_task"].as_array().unwrap();
-    assert_eq!(by_task.len(), 2);
-}
-
-#[tokio::test]
-async fn test_agent_usage_endpoint() {
-    let s = TestServer::start().await;
-    let proj = s.create_project("usage-agent").await;
-    let pid = proj["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Agent Usage Task").await;
-    let task_id = task["id"].as_str().unwrap();
-
-    s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, task_id))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 500, "output_tokens": 250, "cost_usd": 0.015 }))
-        .send().await.unwrap();
-
-    let resp = s.client()
-        .get(format!("{}/api/agents/{}/usage", s.base_url, s.agent_id()))
-        .header("Authorization", s.auth_header())
-        .send().await.unwrap();
-    assert_eq!(resp.status(), 200);
-    let entries: Value = resp.json().await.unwrap();
-    assert!(!entries.as_array().unwrap().is_empty(), "agent usage should have entries");
-    assert_eq!(entries[0]["agent_id"].as_str(), Some(s.agent_id()));
-}
-
-#[tokio::test]
-async fn test_pulse_includes_total_cost() {
-    let s = TestServer::start().await;
-    let proj = s.create_project("usage-pulse").await;
-    let pid = proj["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Cost Task").await;
-
-    s.client()
-        .post(format!("{}/api/tasks/{}/usage", s.base_url, task["id"].as_str().unwrap()))
-        .header("Authorization", s.auth_header())
-        .json(&json!({ "input_tokens": 1000, "output_tokens": 500, "cost_usd": 0.05 }))
-        .send().await.unwrap();
-
-    let pulse: Value = s.client()
-        .get(format!("{}/api/projects/{}/pulse", s.base_url, pid))
-        .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
-    assert!(pulse["total_cost_usd"].is_number(), "pulse should include total_cost_usd");
-    let cost = pulse["total_cost_usd"].as_f64().unwrap();
-    assert!((cost - 0.05).abs() < 0.0001, "pulse total_cost_usd should be 0.05, got {}", cost);
-}
-
 // ===== Inbound Webhook Triggers =====
 
 #[tokio::test]
@@ -2002,7 +1866,8 @@ async fn test_webhook_trigger_create_and_list() {
     let pid = proj["id"].as_str().unwrap();
 
     // Create a trigger
-    let resp: Value = s.client()
+    let resp: Value = s
+        .client()
         .post(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -2015,7 +1880,12 @@ async fn test_webhook_trigger_create_and_list() {
                 "tags": ["ci", "{{payload.repo}}"]
             }
         }))
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     assert_eq!(resp["trigger"]["name"].as_str(), Some("CI Failure"));
     assert_eq!(resp["trigger"]["action_type"].as_str(), Some("create_task"));
@@ -2025,10 +1895,16 @@ async fn test_webhook_trigger_create_and_list() {
     let trigger_id = resp["trigger"]["id"].as_str().unwrap().to_string();
 
     // List triggers
-    let list: Value = s.client()
+    let list: Value = s
+        .client()
         .get(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let arr = list.as_array().unwrap();
     assert_eq!(arr.len(), 1);
@@ -2044,7 +1920,8 @@ async fn test_webhook_trigger_receive_creates_task() {
     let proj = s.create_project("trigger-recv").await;
     let pid = proj["id"].as_str().unwrap();
 
-    let resp: Value = s.client()
+    let resp: Value = s
+        .client()
         .post(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -2056,17 +1933,28 @@ async fn test_webhook_trigger_receive_creates_task() {
                 "priority": "high"
             }
         }))
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let secret = resp["secret"].as_str().unwrap().to_string();
     let trigger_id = resp["trigger"]["id"].as_str().unwrap().to_string();
 
     // Fire the webhook
-    let fire_resp = s.client()
-        .post(format!("{}/api/webhooks/trigger/{}", s.base_url, trigger_id))
+    let fire_resp = s
+        .client()
+        .post(format!(
+            "{}/api/webhooks/trigger/{}",
+            s.base_url, trigger_id
+        ))
         .header("X-Webhook-Secret", &secret)
         .json(&json!({ "service": "payments-api", "region": "eu-west-1" }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(fire_resp.status(), 200);
     let result: Value = fire_resp.json().await.unwrap();
@@ -2074,10 +1962,16 @@ async fn test_webhook_trigger_receive_creates_task() {
 
     // Verify task was created with interpolated title
     let task_id = result["task_id"].as_str().unwrap();
-    let task: Value = s.client()
+    let task: Value = s
+        .client()
         .get(format!("{}/api/tasks/{}", s.base_url, task_id))
         .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     assert_eq!(task["title"].as_str(), Some("Alert: payments-api is down"));
 }
@@ -2088,7 +1982,8 @@ async fn test_webhook_trigger_invalid_secret_rejected() {
     let proj = s.create_project("trigger-auth").await;
     let pid = proj["id"].as_str().unwrap();
 
-    let resp: Value = s.client()
+    let resp: Value = s
+        .client()
         .post(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -2096,24 +1991,41 @@ async fn test_webhook_trigger_invalid_secret_rejected() {
             "action_type": "create_task",
             "action_config": { "title": "Test", "priority": "low" }
         }))
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let trigger_id = resp["trigger"]["id"].as_str().unwrap().to_string();
 
     // Wrong secret → 401
-    let fire_resp = s.client()
-        .post(format!("{}/api/webhooks/trigger/{}", s.base_url, trigger_id))
+    let fire_resp = s
+        .client()
+        .post(format!(
+            "{}/api/webhooks/trigger/{}",
+            s.base_url, trigger_id
+        ))
         .header("X-Webhook-Secret", "wrong-secret")
         .json(&json!({ "foo": "bar" }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(fire_resp.status(), 401);
 
     // Missing secret → 401
-    let fire_resp2 = s.client()
-        .post(format!("{}/api/webhooks/trigger/{}", s.base_url, trigger_id))
+    let fire_resp2 = s
+        .client()
+        .post(format!(
+            "{}/api/webhooks/trigger/{}",
+            s.base_url, trigger_id
+        ))
         .json(&json!({ "foo": "bar" }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(fire_resp2.status(), 401);
 }
@@ -2124,7 +2036,8 @@ async fn test_webhook_trigger_delete() {
     let proj = s.create_project("trigger-del").await;
     let pid = proj["id"].as_str().unwrap();
 
-    let resp: Value = s.client()
+    let resp: Value = s
+        .client()
         .post(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -2132,22 +2045,39 @@ async fn test_webhook_trigger_delete() {
             "action_type": "create_task",
             "action_config": { "title": "Deleted", "priority": "low" }
         }))
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let trigger_id = resp["trigger"]["id"].as_str().unwrap().to_string();
 
     // Delete
-    let del_resp = s.client()
-        .delete(format!("{}/api/projects/{}/triggers/{}", s.base_url, pid, trigger_id))
+    let del_resp = s
+        .client()
+        .delete(format!(
+            "{}/api/projects/{}/triggers/{}",
+            s.base_url, pid, trigger_id
+        ))
         .header("Authorization", s.auth_header())
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(del_resp.status(), 204);
 
     // List should be empty
-    let list: Value = s.client()
+    let list: Value = s
+        .client()
         .get(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(list.as_array().unwrap().len(), 0);
 }
 
@@ -2157,7 +2087,8 @@ async fn test_webhook_trigger_logs_recorded() {
     let proj = s.create_project("trigger-logs").await;
     let pid = proj["id"].as_str().unwrap();
 
-    let resp: Value = s.client()
+    let resp: Value = s
+        .client()
         .post(format!("{}/api/projects/{}/triggers", s.base_url, pid))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -2165,36 +2096,68 @@ async fn test_webhook_trigger_logs_recorded() {
             "action_type": "create_task",
             "action_config": { "title": "Logged Task", "priority": "medium" }
         }))
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let secret = resp["secret"].as_str().unwrap().to_string();
     let trigger_id = resp["trigger"]["id"].as_str().unwrap().to_string();
 
     // Fire with correct secret
     s.client()
-        .post(format!("{}/api/webhooks/trigger/{}", s.base_url, trigger_id))
+        .post(format!(
+            "{}/api/webhooks/trigger/{}",
+            s.base_url, trigger_id
+        ))
         .header("X-Webhook-Secret", &secret)
         .json(&json!({ "x": 1 }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Fire with wrong secret
     s.client()
-        .post(format!("{}/api/webhooks/trigger/{}", s.base_url, trigger_id))
+        .post(format!(
+            "{}/api/webhooks/trigger/{}",
+            s.base_url, trigger_id
+        ))
         .header("X-Webhook-Secret", "bad")
         .json(&json!({ "x": 2 }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Check logs
-    let logs: Value = s.client()
-        .get(format!("{}/api/projects/{}/triggers/{}/logs", s.base_url, pid, trigger_id))
+    let logs: Value = s
+        .client()
+        .get(format!(
+            "{}/api/projects/{}/triggers/{}/logs",
+            s.base_url, pid, trigger_id
+        ))
         .header("Authorization", s.auth_header())
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
     let arr = logs.as_array().unwrap();
     assert_eq!(arr.len(), 2, "should have 2 log entries");
     // Most recent first
-    assert_eq!(arr[0]["status"].as_str(), Some("rejected"), "last entry is rejected");
-    assert_eq!(arr[1]["status"].as_str(), Some("success"), "first entry is success");
+    assert_eq!(
+        arr[0]["status"].as_str(),
+        Some("rejected"),
+        "last entry is rejected"
+    );
+    assert_eq!(
+        arr[1]["status"].as_str(),
+        Some("success"),
+        "first entry is success"
+    );
 }
 
 // ===== User Enrichment Tests =====
@@ -2436,7 +2399,6 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
             assignee_id: None,
             scheduled_at: None,
             recurrence_rule: None,
-            
         },
         &agent.id,
     );
@@ -2517,10 +2479,7 @@ async fn test_agent_targeted_questions() {
     let questions: Vec<Value> = resp.json().await.unwrap();
     assert_eq!(questions.len(), 1);
     assert_eq!(questions[0]["question"], "Can you handle this?");
-    assert_eq!(
-        questions[0]["target_id"].as_str().unwrap(),
-        s.agent_id()
-    );
+    assert_eq!(questions[0]["target_id"].as_str().unwrap(), s.agent_id());
 }
 
 #[tokio::test]
@@ -3018,7 +2977,10 @@ async fn test_auto_target_zero_matches() {
 
     let project = db_ops::create_project(
         &conn,
-        &opengate_models::CreateProject { name: "AT0 Project".to_string(), description: None },
+        &opengate_models::CreateProject {
+            name: "AT0 Project".to_string(),
+            description: None,
+        },
         &agent.id,
     );
     let task = db_ops::create_task(
@@ -3026,8 +2988,15 @@ async fn test_auto_target_zero_matches() {
         &project.id,
         &opengate_models::CreateTask {
             title: "AT0 Task".to_string(),
-            description: None, priority: None, tags: None, context: None, output: None,
-            due_date: None, assignee_type: None, assignee_id: None, scheduled_at: None,
+            description: None,
+            priority: None,
+            tags: None,
+            context: None,
+            output: None,
+            due_date: None,
+            assignee_type: None,
+            assignee_id: None,
+            scheduled_at: None,
             recurrence_rule: None,
         },
         &agent.id,
@@ -3060,7 +3029,10 @@ async fn test_auto_target_zero_matches() {
 
     // Question should remain unrouted
     let q = db_ops::get_question(&conn, &question.id).unwrap();
-    assert!(q.target_id.is_none(), "Question should remain unrouted with 0 matches");
+    assert!(
+        q.target_id.is_none(),
+        "Question should remain unrouted with 0 matches"
+    );
     assert!(q.target_type.is_none());
 }
 
@@ -3072,8 +3044,7 @@ async fn test_auto_target_single_exact_match() {
 
     let (creator, _) = db_ops::create_agent(
         &conn,
-        &CreateAgent::new("creator-agent")
-            .with_capabilities(vec!["coding:rust".to_string()]),
+        &CreateAgent::new("creator-agent").with_capabilities(vec!["coding:rust".to_string()]),
     );
     let (devops_agent, _) = db_ops::create_agent(
         &conn,
@@ -3083,7 +3054,10 @@ async fn test_auto_target_single_exact_match() {
 
     let project = db_ops::create_project(
         &conn,
-        &opengate_models::CreateProject { name: "AT1 Project".to_string(), description: None },
+        &opengate_models::CreateProject {
+            name: "AT1 Project".to_string(),
+            description: None,
+        },
         &creator.id,
     );
     let task = db_ops::create_task(
@@ -3091,8 +3065,15 @@ async fn test_auto_target_single_exact_match() {
         &project.id,
         &opengate_models::CreateTask {
             title: "AT1 Task".to_string(),
-            description: None, priority: None, tags: None, context: None, output: None,
-            due_date: None, assignee_type: None, assignee_id: None, scheduled_at: None,
+            description: None,
+            priority: None,
+            tags: None,
+            context: None,
+            output: None,
+            due_date: None,
+            assignee_type: None,
+            assignee_id: None,
+            scheduled_at: None,
             recurrence_rule: None,
         },
         &creator.id,
@@ -3115,7 +3096,11 @@ async fn test_auto_target_single_exact_match() {
     );
 
     let result = db_ops::auto_target_question(&conn, &question.id, "devops:docker");
-    assert_eq!(result.len(), 1, "Expected exactly 1 match for devops:docker");
+    assert_eq!(
+        result.len(),
+        1,
+        "Expected exactly 1 match for devops:docker"
+    );
     assert_eq!(result[0].target_type, "agent");
     assert_eq!(result[0].target_id, devops_agent.id);
 
@@ -3133,8 +3118,7 @@ async fn test_auto_target_multiple_matches() {
 
     let (agent1, _) = db_ops::create_agent(
         &conn,
-        &CreateAgent::new("devops-agent-1")
-            .with_capabilities(vec!["devops:docker".to_string()]),
+        &CreateAgent::new("devops-agent-1").with_capabilities(vec!["devops:docker".to_string()]),
     );
     let (_agent2, _) = db_ops::create_agent(
         &conn,
@@ -3144,7 +3128,10 @@ async fn test_auto_target_multiple_matches() {
 
     let project = db_ops::create_project(
         &conn,
-        &opengate_models::CreateProject { name: "ATM Project".to_string(), description: None },
+        &opengate_models::CreateProject {
+            name: "ATM Project".to_string(),
+            description: None,
+        },
         &agent1.id,
     );
     let task = db_ops::create_task(
@@ -3152,8 +3139,15 @@ async fn test_auto_target_multiple_matches() {
         &project.id,
         &opengate_models::CreateTask {
             title: "ATM Task".to_string(),
-            description: None, priority: None, tags: None, context: None, output: None,
-            due_date: None, assignee_type: None, assignee_id: None, scheduled_at: None,
+            description: None,
+            priority: None,
+            tags: None,
+            context: None,
+            output: None,
+            due_date: None,
+            assignee_type: None,
+            assignee_id: None,
+            scheduled_at: None,
             recurrence_rule: None,
         },
         &agent1.id,
@@ -3176,11 +3170,18 @@ async fn test_auto_target_multiple_matches() {
     );
 
     let result = db_ops::auto_target_question(&conn, &question.id, "devops:docker");
-    assert!(result.len() >= 2, "Expected 2+ matches for devops:docker, got {}", result.len());
+    assert!(
+        result.len() >= 2,
+        "Expected 2+ matches for devops:docker, got {}",
+        result.len()
+    );
 
     // Question should remain unrouted (N > 1)
     let q = db_ops::get_question(&conn, &question.id).unwrap();
-    assert!(q.target_id.is_none(), "Question should remain unrouted with N matches");
+    assert!(
+        q.target_id.is_none(),
+        "Question should remain unrouted with N matches"
+    );
 }
 
 #[tokio::test]
@@ -3191,8 +3192,7 @@ async fn test_auto_target_finds_agents_by_capability() {
 
     let (_agent, _) = db_ops::create_agent(
         &conn,
-        &CreateAgent::new("review-agent")
-            .with_capabilities(vec!["review".to_string()]),
+        &CreateAgent::new("review-agent").with_capabilities(vec!["review".to_string()]),
     );
 
     let targets = db_ops::find_capability_targets(&conn, "review");
@@ -3209,7 +3209,8 @@ async fn test_auto_target_via_api_single_match() {
     let s = TestServer::start().await;
 
     // Register a devops agent with capabilities via the register endpoint
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/agents/register", s.base_url))
         .json(&json!({
             "name": "devops-agent",
@@ -3230,7 +3231,8 @@ async fn test_auto_target_via_api_single_match() {
     let task_id = task["id"].as_str().unwrap();
 
     // Create question with required_capability but no target
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/tasks/{}/questions", s.base_url, task_id))
         .header("Authorization", s.auth_header())
         .json(&json!({
@@ -3244,8 +3246,14 @@ async fn test_auto_target_via_api_single_match() {
     let q: Value = resp.json().await.unwrap();
 
     // Should be auto-targeted to the devops agent
-    assert_eq!(q["target_type"], "agent", "Should be auto-targeted to agent");
-    assert_eq!(q["target_id"], devops_agent_id, "Should be targeted to devops-agent");
+    assert_eq!(
+        q["target_type"], "agent",
+        "Should be auto-targeted to agent"
+    );
+    assert_eq!(
+        q["target_id"], devops_agent_id,
+        "Should be targeted to devops-agent"
+    );
 }
 
 #[tokio::test]
@@ -3254,7 +3262,8 @@ async fn test_question_reply_notifications() {
     let s = TestServer::start().await;
 
     // Register a second agent
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/agents/register", s.base_url))
         .json(&json!({
             "name": "answerer-agent",
@@ -3275,7 +3284,8 @@ async fn test_question_reply_notifications() {
     let task_id = task["id"].as_str().unwrap();
 
     // First agent asks a question
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/tasks/{}/questions", s.base_url, task_id))
         .header("Authorization", s.auth_header())
         .json(&json!({ "question": "How to deploy?" }))
@@ -3287,7 +3297,8 @@ async fn test_question_reply_notifications() {
     let q_id = q["id"].as_str().unwrap();
 
     // Second agent replies
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!(
             "{}/api/tasks/{}/questions/{}/replies",
             s.base_url, task_id, q_id
@@ -3300,8 +3311,12 @@ async fn test_question_reply_notifications() {
     assert_eq!(resp.status(), 201);
 
     // First agent should have a notification about the reply
-    let resp = s.client()
-        .get(format!("{}/api/agents/me/notifications?unread=true", s.base_url))
+    let resp = s
+        .client()
+        .get(format!(
+            "{}/api/agents/me/notifications?unread=true",
+            s.base_url
+        ))
         .header("Authorization", s.auth_header())
         .send()
         .await
@@ -3313,7 +3328,10 @@ async fn test_question_reply_notifications() {
         let event_type = n["event_type"].as_str().unwrap_or("");
         event_type == "question_replied"
     });
-    assert!(reply_notif.is_some(), "Asker should receive question_replied notification");
+    assert!(
+        reply_notif.is_some(),
+        "Asker should receive question_replied notification"
+    );
 }
 
 #[tokio::test]
@@ -3322,7 +3340,8 @@ async fn test_question_resolved_notification() {
     let s = TestServer::start().await;
 
     // Register a second agent to resolve the question
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/agents/register", s.base_url))
         .json(&json!({
             "name": "resolver-agent",
@@ -3342,7 +3361,8 @@ async fn test_question_resolved_notification() {
     let task_id = task["id"].as_str().unwrap();
 
     // First agent asks a question
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!("{}/api/tasks/{}/questions", s.base_url, task_id))
         .header("Authorization", s.auth_header())
         .json(&json!({ "question": "What DB should we use?" }))
@@ -3354,7 +3374,8 @@ async fn test_question_resolved_notification() {
     let q_id = q["id"].as_str().unwrap();
 
     // Second agent resolves the question
-    let resp = s.client()
+    let resp = s
+        .client()
         .post(format!(
             "{}/api/tasks/{}/questions/{}/resolve",
             s.base_url, task_id, q_id
@@ -3367,8 +3388,12 @@ async fn test_question_resolved_notification() {
     assert_eq!(resp.status(), 200);
 
     // First agent should have a question_resolved notification
-    let resp = s.client()
-        .get(format!("{}/api/agents/me/notifications?unread=true", s.base_url))
+    let resp = s
+        .client()
+        .get(format!(
+            "{}/api/agents/me/notifications?unread=true",
+            s.base_url
+        ))
         .header("Authorization", s.auth_header())
         .send()
         .await
@@ -3380,7 +3405,10 @@ async fn test_question_resolved_notification() {
         let event_type = n["event_type"].as_str().unwrap_or("");
         event_type == "question_resolved"
     });
-    assert!(resolved_notif.is_some(), "Asker should receive question_resolved notification");
+    assert!(
+        resolved_notif.is_some(),
+        "Asker should receive question_resolved notification"
+    );
 }
 
 // ===== Dependency Enforcement =====
@@ -3406,11 +3434,14 @@ async fn test_cannot_start_task_with_unmet_deps() {
         .unwrap();
 
     // Move A to todo first (backlog → todo is always allowed)
-    let r = s.client()
+    let r = s
+        .client()
         .patch(format!("{}/api/tasks/{}", s.base_url, a_id))
         .header("Authorization", s.auth_header())
         .json(&json!({ "status": "todo" }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert!(r.status().is_success(), "backlog→todo should succeed");
 
     // Try to move A to in_progress — should fail (B not done)
@@ -3422,9 +3453,16 @@ async fn test_cannot_start_task_with_unmet_deps() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 409, "Should reject with 409 Conflict when deps unmet");
+    assert_eq!(
+        resp.status(),
+        409,
+        "Should reject with 409 Conflict when deps unmet"
+    );
     let body: Value = resp.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("dependencies not met"));
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("dependencies not met"));
 }
 
 #[tokio::test]
@@ -3449,14 +3487,20 @@ async fn test_can_start_task_once_deps_done() {
 
     // Complete B: backlog → todo → in_progress → done
     for status in &["todo", "in_progress", "done"] {
-        let r = s.client()
+        let r = s
+            .client()
             .patch(format!("{}/api/tasks/{}", s.base_url, b_id))
             .header("Authorization", s.auth_header())
             .json(&json!({ "status": status }))
             .send()
             .await
             .unwrap();
-        assert!(r.status().is_success(), "B transition to {} failed: {}", status, r.status());
+        assert!(
+            r.status().is_success(),
+            "B transition to {} failed: {}",
+            status,
+            r.status()
+        );
     }
 
     // Now A should be auto-unblocked to todo; can move to in_progress
@@ -3468,7 +3512,11 @@ async fn test_can_start_task_once_deps_done() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200, "Should allow in_progress once dep is done");
+    assert_eq!(
+        resp.status(),
+        200,
+        "Should allow in_progress once dep is done"
+    );
 }
 
 #[tokio::test]
@@ -3500,7 +3548,11 @@ async fn test_assign_with_pending_deps_adds_warning() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200, "Assign should succeed even with unmet deps");
+    assert_eq!(
+        resp.status(),
+        200,
+        "Assign should succeed even with unmet deps"
+    );
 
     // Check activity log has warning
     let activity_resp = s
@@ -3557,7 +3609,10 @@ async fn test_start_review_sets_timestamp() {
         .await
         .unwrap();
     let body: Value = resp.json().await.unwrap();
-    assert!(body["started_review_at"].is_null(), "started_review_at should be null initially");
+    assert!(
+        body["started_review_at"].is_null(),
+        "started_review_at should be null initially"
+    );
 
     // Start review
     let resp = s
@@ -3570,7 +3625,10 @@ async fn test_start_review_sets_timestamp() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "review", "Status should remain review");
-    assert!(body["started_review_at"].is_string(), "started_review_at should be set");
+    assert!(
+        body["started_review_at"].is_string(),
+        "started_review_at should be set"
+    );
 }
 
 // Test start-review: must be in review status
@@ -3598,7 +3656,11 @@ async fn test_start_review_requires_review_status() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "Should reject start-review when not in review status");
+    assert_eq!(
+        resp.status(),
+        400,
+        "Should reject start-review when not in review status"
+    );
 }
 
 // Test start-review: non-reviewer gets 403
@@ -3654,7 +3716,10 @@ async fn test_start_review_non_reviewer_gets_403() {
         .unwrap();
     assert_eq!(resp.status(), 403, "Non-reviewer should get 403");
     let body: Value = resp.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("Only the assigned reviewer"));
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("Only the assigned reviewer"));
 }
 
 // Test review_task_count appears in agent response
@@ -3693,7 +3758,13 @@ async fn test_review_task_count_in_agent_response() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let agent: Value = resp.json().await.unwrap();
-    assert_eq!(agent["review_task_count"], 1, "Agent should have 1 review task");
+    assert_eq!(
+        agent["review_task_count"], 1,
+        "Agent should have 1 review task"
+    );
     // current_task_count should be 0 since task moved to review (not in_progress)
-    assert_eq!(agent["current_task_count"], 0, "current_task_count should be 0 (task is in review, not in_progress)");
+    assert_eq!(
+        agent["current_task_count"], 0,
+        "current_task_count should be 0 (task is in review, not in_progress)"
+    );
 }

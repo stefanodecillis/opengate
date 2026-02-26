@@ -275,14 +275,20 @@ fn route_event_notifications(
         "task.unblocked" => {
             if let Some(task) = &task {
                 if let Some(assignee_id) = task.assignee_id.as_deref() {
-                    let unblocked_by = payload.get("unblocked_by").and_then(|v| v.as_str()).unwrap_or("a dependency");
+                    let unblocked_by = payload
+                        .get("unblocked_by")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("a dependency");
                     pending.push(insert_notification(
                         conn,
                         assignee_id,
                         event_id,
                         event_type,
                         &format!("Unblocked: {}", task.title),
-                        Some(&format!("'{}' is now complete — your task is ready to start.", unblocked_by)),
+                        Some(&format!(
+                            "'{}' is now complete — your task is ready to start.",
+                            unblocked_by
+                        )),
                     ));
                 }
             }
@@ -293,12 +299,19 @@ fn route_event_notifications(
         "task.question_asked" | "task.question_assigned" => {
             // Notify the question target if they are an agent
             if let Some(target_id) = payload.get("target_id").and_then(|v| v.as_str()) {
-                let target_type = payload.get("target_type").and_then(|v| v.as_str()).unwrap_or("agent");
+                let target_type = payload
+                    .get("target_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("agent");
                 if target_type == "agent" {
-                    let question_text = payload.get("question")
+                    let question_text = payload
+                        .get("question")
                         .and_then(|v| v.as_str())
                         .unwrap_or("You have a question");
-                    let task_title = payload.get("task_title").and_then(|v| v.as_str()).unwrap_or("");
+                    let task_title = payload
+                        .get("task_title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let snippet: String = question_text.chars().take(200).collect();
                     pending.push(insert_notification(
                         conn,
@@ -315,7 +328,10 @@ fn route_event_notifications(
             // Notify the task assignee about the reply
             if let Some(task) = &task {
                 if let Some(assignee_id) = task.assignee_id.as_deref() {
-                    let actor = payload.get("actor_name").and_then(|v| v.as_str()).unwrap_or("Someone");
+                    let actor = payload
+                        .get("actor_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Someone");
                     let body_text = payload.get("body").and_then(|v| v.as_str()).unwrap_or("");
                     let snippet: String = body_text.chars().take(150).collect();
                     pending.push(insert_notification(
@@ -888,10 +904,16 @@ pub fn get_task_dependents(conn: &Connection, task_id: &str) -> Vec<Task> {
 
 /// After a task completes, check all its dependents. If all their deps are done,
 /// auto-transition them from backlog/blocked → todo and notify their assignees.
-pub fn unblock_dependents_on_complete(conn: &Connection, completed_task_id: &str) -> Vec<PendingNotifWebhook> {
+pub fn unblock_dependents_on_complete(
+    conn: &Connection,
+    completed_task_id: &str,
+) -> Vec<PendingNotifWebhook> {
     let dependents = get_task_dependents(conn, completed_task_id);
     let completed = get_task(conn, completed_task_id);
-    let completed_title = completed.as_ref().map(|t| t.title.as_str()).unwrap_or("a dependency");
+    let completed_title = completed
+        .as_ref()
+        .map(|t| t.title.as_str())
+        .unwrap_or("a dependency");
     let mut pending: Vec<PendingNotifWebhook> = Vec::new();
 
     for dep_task in dependents {
@@ -914,7 +936,8 @@ pub fn unblock_dependents_on_complete(conn: &Connection, completed_task_id: &str
                 Some("auto-unblock"),
             );
             // Notify the assignee that their blocked task is now unblocked
-            if dep_task.assignee_id.is_some() && dep_task.assignee_type.as_deref() == Some("agent") {
+            if dep_task.assignee_id.is_some() && dep_task.assignee_type.as_deref() == Some("agent")
+            {
                 pending.extend(emit_event(
                     conn,
                     "task.unblocked",
@@ -1186,11 +1209,13 @@ pub fn claim_task(
 
     // Enforce max_concurrent_tasks limit
     let agent = get_agent(conn, agent_id).ok_or("Agent not found")?;
-    let current_tasks: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tasks WHERE assignee_id = ?1 AND status = 'in_progress'",
-        params![agent_id],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let current_tasks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE assignee_id = ?1 AND status = 'in_progress'",
+            params![agent_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     if current_tasks >= agent.max_concurrent_tasks {
         return Err(format!(
             "Agent at capacity ({}/{} in-progress tasks). Cannot claim more work.",
@@ -1566,11 +1591,13 @@ fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agen
     ).unwrap_or(0);
 
     // Count tasks where this agent is the reviewer and task is in review status
-    let review_task_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tasks WHERE reviewer_id = ?1 AND status = 'review'",
-        params![id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let review_task_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE reviewer_id = ?1 AND status = 'review'",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Compute status from heartbeat + active task count (including reviews for utilization)
     let last_seen: Option<String> = row.get(9)?;
@@ -2185,11 +2212,17 @@ pub fn assign_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<T
     let new_status = match status {
         TaskStatus::Backlog => {
             // Respect scheduled_at: do not promote to todo before scheduled time
-            let is_future_scheduled = task.scheduled_at.as_deref()
+            let is_future_scheduled = task
+                .scheduled_at
+                .as_deref()
                 .map(|s| !s.is_empty() && s > now().as_str())
                 .unwrap_or(false);
-            if is_future_scheduled { "backlog" } else { "todo" }
-        },
+            if is_future_scheduled {
+                "backlog"
+            } else {
+                "todo"
+            }
+        }
         _ => &task.status,
     };
 
@@ -2495,8 +2528,13 @@ pub fn submit_review_task(
         "agent",
         submitter_id,
         &CreateActivity {
-            content: format!("{} (reviewer assigned: agent:{})", summary_text,
-                get_agent(conn, &reviewer_id).map(|a| a.name).unwrap_or_else(|| reviewer_id.clone())),
+            content: format!(
+                "{} (reviewer assigned: agent:{})",
+                summary_text,
+                get_agent(conn, &reviewer_id)
+                    .map(|a| a.name)
+                    .unwrap_or_else(|| reviewer_id.clone())
+            ),
             activity_type: Some("status_change".to_string()),
             metadata: None,
         },
@@ -2803,14 +2841,19 @@ pub fn list_questions(conn: &Connection, task_id: &str, status: Option<&str>) ->
         ),
     };
     let mut stmt = conn.prepare(&sql).unwrap();
-    let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|b| b.as_ref()).collect();
     stmt.query_map(params.as_slice(), row_to_question)
         .unwrap()
         .filter_map(|r| r.ok())
         .collect()
 }
 
-pub fn list_questions_for_agent(conn: &Connection, agent_id: &str, status: Option<&str>) -> Vec<TaskQuestion> {
+pub fn list_questions_for_agent(
+    conn: &Connection,
+    agent_id: &str,
+    status: Option<&str>,
+) -> Vec<TaskQuestion> {
     let status_filter = status.unwrap_or("open");
     let sql = format!(
         "SELECT {} FROM task_questions WHERE target_type = 'agent' AND target_id = ?1 AND status = ?2 ORDER BY created_at ASC",
@@ -2853,7 +2896,8 @@ pub fn list_questions_for_project(
         conditions.join(" AND ")
     );
     let mut stmt = conn.prepare(&sql).unwrap();
-    let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|b| b.as_ref()).collect();
     stmt.query_map(params.as_slice(), row_to_question)
         .unwrap()
         .filter_map(|r| r.ok())
@@ -3001,7 +3045,10 @@ pub fn assign_question(
 /// Find agents matching a required capability string.
 /// Returns matches sorted: online agents first, scored by capability_match_score,
 /// then offline agents.
-pub fn find_capability_targets(conn: &Connection, required_capability: &str) -> Vec<CapabilityTarget> {
+pub fn find_capability_targets(
+    conn: &Connection,
+    required_capability: &str,
+) -> Vec<CapabilityTarget> {
     let required = vec![required_capability.to_string()];
     let mut targets: Vec<CapabilityTarget> = Vec::new();
 
@@ -3123,7 +3170,11 @@ pub fn get_pulse(
     caller_agent_id: Option<&str>,
 ) -> PulseResponse {
     // Active tasks (backlog, todo, in_progress, handoff)
-    let active_tasks = pulse_tasks_by_statuses(conn, project_id, &["backlog", "todo", "in_progress", "handoff"]);
+    let active_tasks = pulse_tasks_by_statuses(
+        conn,
+        project_id,
+        &["backlog", "todo", "in_progress", "handoff"],
+    );
 
     // Blocked tasks
     let blocked_tasks = pulse_tasks_by_status(conn, project_id, "blocked");
@@ -3275,8 +3326,16 @@ fn pulse_tasks_by_status(conn: &Connection, project_id: &str, status: &str) -> V
     .collect()
 }
 
-fn pulse_tasks_by_statuses(conn: &Connection, project_id: &str, statuses: &[&str]) -> Vec<PulseTask> {
-    let placeholders: Vec<String> = statuses.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
+fn pulse_tasks_by_statuses(
+    conn: &Connection,
+    project_id: &str,
+    statuses: &[&str],
+) -> Vec<PulseTask> {
+    let placeholders: Vec<String> = statuses
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
     let sql = format!(
         "SELECT t.id, t.title, t.status, t.priority, t.assignee_id, t.reviewer_id, t.updated_at
          FROM tasks t WHERE t.project_id = ?1 AND t.status IN ({})
@@ -3290,12 +3349,10 @@ fn pulse_tasks_by_statuses(conn: &Connection, project_id: &str, statuses: &[&str
         params_vec.push(Box::new(s.to_string()));
     }
     let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
-    stmt.query_map(refs.as_slice(), |row| {
-        Ok(pulse_task_from_row(conn, row))
-    })
-    .unwrap()
-    .filter_map(|r| r.ok())
-    .collect()
+    stmt.query_map(refs.as_slice(), |row| Ok(pulse_task_from_row(conn, row)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
 }
 
 fn pulse_task_from_row(conn: &Connection, row: &rusqlite::Row) -> PulseTask {
@@ -3352,11 +3409,12 @@ pub fn find_best_agent(conn: &Connection, strategy: &AssignStrategy) -> Option<S
         .into_iter()
         .filter(|a| a.status != "offline")
         .filter(|a| {
-            strategy.seniority.as_deref().is_none_or(|s| a.seniority == s)
+            strategy
+                .seniority
+                .as_deref()
+                .is_none_or(|s| a.seniority == s)
         })
-        .filter(|a| {
-            strategy.role.as_deref().is_none_or(|r| a.role == r)
-        })
+        .filter(|a| strategy.role.as_deref().is_none_or(|r| a.role == r))
         .filter_map(|a| {
             let score = capability_match_score(&a.capabilities, required);
             if required.is_empty() || score > 0 {
@@ -3379,11 +3437,14 @@ fn capability_match_score(agent_caps: &[String], required: &[String]) -> usize {
     if required.is_empty() {
         return 1;
     }
-    required.iter().filter(|req| {
-        agent_caps.iter().any(|ac| {
-            ac == *req || (!req.contains(':') && ac.starts_with(&format!("{req}:")))
+    required
+        .iter()
+        .filter(|req| {
+            agent_caps
+                .iter()
+                .any(|ac| ac == *req || (!req.contains(':') && ac.starts_with(&format!("{req}:"))))
         })
-    }).count()
+        .count()
 }
 
 // ===== Inbound Webhook Triggers =====
@@ -3428,7 +3489,10 @@ pub fn create_webhook_trigger(
     (trigger, raw_secret)
 }
 
-pub fn list_webhook_triggers(conn: &Connection, project_id: &str) -> Vec<opengate_models::WebhookTrigger> {
+pub fn list_webhook_triggers(
+    conn: &Connection,
+    project_id: &str,
+) -> Vec<opengate_models::WebhookTrigger> {
     conn.prepare(
         "SELECT id, project_id, name, action_type, action_config, enabled, created_at, updated_at
          FROM webhook_triggers WHERE project_id = ?1 ORDER BY created_at ASC",
@@ -3436,7 +3500,8 @@ pub fn list_webhook_triggers(conn: &Connection, project_id: &str) -> Vec<opengat
     .unwrap()
     .query_map(rusqlite::params![project_id], |row| {
         let config_str: String = row.get(4)?;
-        let config: serde_json::Value = serde_json::from_str(&config_str).unwrap_or(serde_json::Value::Null);
+        let config: serde_json::Value =
+            serde_json::from_str(&config_str).unwrap_or(serde_json::Value::Null);
         Ok(opengate_models::WebhookTrigger {
             id: row.get(0)?,
             project_id: row.get(1)?,
@@ -3483,9 +3548,12 @@ pub fn get_webhook_trigger_for_validation(
 }
 
 pub fn delete_webhook_trigger(conn: &Connection, trigger_id: &str) -> bool {
-    conn.execute("DELETE FROM webhook_triggers WHERE id = ?1", rusqlite::params![trigger_id])
-        .map(|n| n > 0)
-        .unwrap_or(false)
+    conn.execute(
+        "DELETE FROM webhook_triggers WHERE id = ?1",
+        rusqlite::params![trigger_id],
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
 }
 
 pub fn log_trigger_execution(
@@ -3510,7 +3578,11 @@ pub fn log_trigger_execution(
     id
 }
 
-pub fn list_trigger_logs(conn: &Connection, trigger_id: &str, limit: i64) -> Vec<opengate_models::WebhookTriggerLog> {
+pub fn list_trigger_logs(
+    conn: &Connection,
+    trigger_id: &str,
+    limit: i64,
+) -> Vec<opengate_models::WebhookTriggerLog> {
     conn.prepare(
         "SELECT id, trigger_id, received_at, status, payload, result, error
          FROM webhook_trigger_logs WHERE trigger_id = ?1 ORDER BY received_at DESC LIMIT ?2",
@@ -3605,8 +3677,9 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
     }
 
     // Review tasks where I'm reviewer (not assignee)
-    let reviewer_items: Vec<InboxItem> = review_tasks.iter().map(|t| {
-        InboxItem {
+    let reviewer_items: Vec<InboxItem> = review_tasks
+        .iter()
+        .map(|t| InboxItem {
             id: t.id.clone(),
             item_type: "task".to_string(),
             title: t.title.clone(),
@@ -3618,14 +3691,15 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
             tags: t.tags.clone(),
             updated_at: Some(t.updated_at.clone()),
             metadata: None,
-        }
-    }).collect();
+        })
+        .collect();
 
     let all_review: Vec<InboxItem> = my_review_tasks.into_iter().chain(reviewer_items).collect();
 
     // Map questions to inbox items
-    let question_items: Vec<InboxItem> = questions.iter().map(|q| {
-        InboxItem {
+    let question_items: Vec<InboxItem> = questions
+        .iter()
+        .map(|q| InboxItem {
             id: q.id.clone(),
             item_type: "question".to_string(),
             title: q.question.clone(),
@@ -3640,12 +3714,13 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
                 "task_id": q.task_id,
                 "blocking": q.blocking,
             })),
-        }
-    }).collect();
+        })
+        .collect();
 
     // Map notifications to inbox items
-    let notification_items: Vec<InboxItem> = notifications.iter().map(|n| {
-        InboxItem {
+    let notification_items: Vec<InboxItem> = notifications
+        .iter()
+        .map(|n| InboxItem {
             id: n.id.to_string(),
             item_type: "notification".to_string(),
             title: n.title.clone(),
@@ -3660,8 +3735,8 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
                 "event_type": n.event_type,
                 "body": n.body,
             })),
-        }
-    }).collect();
+        })
+        .collect();
 
     let capacity = InboxCapacity {
         max_concurrent_tasks: max_concurrent,
@@ -3670,8 +3745,12 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
     };
 
     // Build summary
-    let total_actionable = todo_tasks.len() + in_progress_tasks.len() + all_review.len()
-        + blocked_tasks.len() + handoff_tasks.len() + question_items.len();
+    let total_actionable = todo_tasks.len()
+        + in_progress_tasks.len()
+        + all_review.len()
+        + blocked_tasks.len()
+        + handoff_tasks.len()
+        + question_items.len();
 
     let summary = if total_actionable == 0 && notification_items.is_empty() {
         "No actionable work. Use next_task to find unclaimed tasks to work on.".to_string()
@@ -3701,7 +3780,10 @@ pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
         let capacity_note = if capacity.has_capacity {
             format!("Capacity: {}/{} slots used.", active_count, max_concurrent)
         } else {
-            format!("At capacity: {}/{} slots used.", active_count, max_concurrent)
+            format!(
+                "At capacity: {}/{} slots used.",
+                active_count, max_concurrent
+            )
         };
         format!("{}. {}", parts.join(", "), capacity_note)
     };
@@ -3731,11 +3813,23 @@ fn task_to_inbox_item(conn: &Connection, task: &Task) -> InboxItem {
     };
 
     let (action, action_hint) = match (task.status.as_str(), dependency_status) {
-        ("todo", "blocked") => ("wait_deps", "Task has unmet dependencies. Cannot start until they complete."),
-        ("todo", _) => ("start_work", "Call claim_task to start working on this task."),
-        ("in_progress", _) => ("continue_work", "Continue working or call complete_task when done."),
+        ("todo", "blocked") => (
+            "wait_deps",
+            "Task has unmet dependencies. Cannot start until they complete.",
+        ),
+        ("todo", _) => (
+            "start_work",
+            "Call claim_task to start working on this task.",
+        ),
+        ("in_progress", _) => (
+            "continue_work",
+            "Continue working or call complete_task when done.",
+        ),
         ("blocked", _) => ("unblock", "Resolve the blocker, then update status."),
-        ("review", _) => ("review_task", "Review this task. Call approve_task or request_changes."),
+        ("review", _) => (
+            "review_task",
+            "Review this task. Call approve_task or request_changes.",
+        ),
         ("handoff", _) => ("accept_handoff", "Call claim_task to accept this handoff."),
         _ => ("unknown", ""),
     };

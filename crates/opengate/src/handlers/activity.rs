@@ -32,10 +32,12 @@ pub async fn create_activity(
 ) -> Result<(StatusCode, Json<TaskActivity>), (StatusCode, Json<serde_json::Value>)> {
     let task = match state.storage.get_task(None, &task_id) {
         Some(t) => t,
-        None => return Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Task not found"})),
-        )),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Task not found"})),
+            ))
+        }
     };
 
     let activity = state.storage.create_activity(

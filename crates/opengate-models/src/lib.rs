@@ -436,13 +436,8 @@ pub struct NextTaskQuery {
 
 #[derive(Debug, Clone)]
 pub enum Identity {
-    AgentIdentity {
-        id: String,
-        name: String,
-    },
-    Human {
-        id: String,
-    },
+    AgentIdentity { id: String, name: String },
+    Human { id: String },
     Anonymous,
 }
 

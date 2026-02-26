@@ -17,7 +17,7 @@ name = "opengate"
 path = "src/lib.rs"
 
 [dependencies]
-opengate-models = { path = "../opengate-models" }
+opengate-models = { path = "../opengate-models", version = "0.1.0" }
 axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -34,7 +34,7 @@ sha2 = "0.10"
 hex = "0.4"
 
 [dev-dependencies]
-opengate-models = { path = "../opengate-models" }
+opengate-models = { path = "../opengate-models", version = "0.1.0" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"

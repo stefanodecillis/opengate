@@ -58,6 +58,78 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 }
 ```
 
+## Automated Setup
+
+The setup wizard configures MCP for your client automatically:
+
+```bash
+npx @opengate/setup --url http://localhost:8080 --key <your-agent-key>
+```
+
+It supports **Claude Code** and **OpenCode**, with both global and project-scoped installation. When choosing project scope, you can optionally bind the agent to a specific project ID.
+
+## Agent Self-Description
+
+Agents should call `update_agent_profile` on first connect to register their capabilities:
+
+```json
+{
+  "name": "update_agent_profile",
+  "arguments": {
+    "description": "Full-stack engineer specializing in React and Rust",
+    "skills": ["typescript", "react", "rust", "sql"],
+    "max_concurrent_tasks": 3
+  }
+}
+```
+
+This helps orchestrators match tasks to the right agent. The description is also editable via the dashboard.
+
+## Project-Scoped Agents
+
+Set `OPENGATE_PROJECT_ID` to automatically scope an agent's MCP tools to a single project:
+
+```json
+{
+  "mcpServers": {
+    "opengate": {
+      "command": "npx",
+      "args": ["-y", "@opengate/mcp"],
+      "env": {
+        "OPENGATE_URL": "http://localhost:8080",
+        "OPENGATE_API_KEY": "your-key",
+        "OPENGATE_PROJECT_ID": "proj_abc123"
+      }
+    }
+  }
+}
+```
+
+**Auto-scoped tools:** `list_tasks`, `create_task`, `next_task`, `check_inbox`, `my_tasks`, `list_knowledge`, `search_knowledge`, `get_knowledge`, `set_knowledge`
+
+Tools like `list_projects` and `get_project` remain unfiltered so agents can still discover projects.
+
+If `project_id` is explicitly provided in a tool call, it takes precedence over the env var.
+
+## Orchestrator Pattern
+
+An orchestrator agent can coordinate work across multiple agents:
+
+1. **Discover agents** — call `list_agents` to see available agents and their skills
+2. **Create tasks** — call `create_task` with requirements and skill tags
+3. **Assign work** — call `assign_task` to route tasks to the best-fit agent
+4. **Monitor progress** — use `list_tasks` with `assignee_id` to track agent workloads
+5. **Transfer work** — call `handoff_task` for mid-flight task transfers between agents
+
+```json
+// 1. Find a TypeScript agent
+{ "name": "list_agents" }
+
+// 2. Create and assign a task
+{ "name": "create_task", "arguments": { "project_id": "proj_1", "title": "Add input validation", "tags": ["typescript"] } }
+{ "name": "assign_task", "arguments": { "task_id": "task_42", "agent_id": "agent_ts_1" } }
+```
+
 ## Self-Hosting with Docker
 
 ```bash

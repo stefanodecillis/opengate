@@ -175,10 +175,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/agents/register",
             post(handlers::agents::register_agent),
         )
-        .route(
-            "/api/agents/match",
-            get(handlers::agents::match_best_agent),
-        )
+        .route("/api/agents/match", get(handlers::agents::match_best_agent))
         .route(
             "/api/agents/:id",
             get(handlers::agents::get_agent)
@@ -186,10 +183,7 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::agents::delete_agent),
         )
         .route("/api/agents/heartbeat", post(handlers::agents::heartbeat))
-        .route(
-            "/api/agents/me/inbox",
-            get(handlers::agents::inbox),
-        )
+        .route("/api/agents/me/inbox", get(handlers::agents::inbox))
         .route(
             "/api/agents/me/questions",
             get(handlers::questions::my_questions),
@@ -264,7 +258,7 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
         tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-            let released = bg_storage.release_stale_tasks(None, 30);
+            let released = bg_storage.release_stale_tasks(None, 240);
             for task in &released {
                 eprintln!(
                     "[cleanup] Auto-released stale task: {} ({})",
@@ -294,7 +288,10 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
                 interval.tick().await;
                 let count = sched_storage.transition_ready_scheduled_tasks(None);
                 if count > 0 {
-                    eprintln!("[scheduler] Promoted {} scheduled task(s) backlog\u{2192}todo", count);
+                    eprintln!(
+                        "[scheduler] Promoted {} scheduled task(s) backlog\u{2192}todo",
+                        count
+                    );
                 }
             }
         });
@@ -321,7 +318,7 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
         .await
         .expect("Failed to bind port");
 
-    eprintln!("TaskForge listening on http://0.0.0.0:{}", port);
+    eprintln!("OpenGate listening on http://0.0.0.0:{}", port);
 
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal)

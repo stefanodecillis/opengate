@@ -41,7 +41,10 @@ pub async fn create_question(
 
     // Re-fetch question after auto-targeting may have updated target_type/target_id
     let question = if auto_targets.is_some() {
-        state.storage.get_question(None, &question.id).unwrap_or(question)
+        state
+            .storage
+            .get_question(None, &question.id)
+            .unwrap_or(question)
     } else {
         question
     };
@@ -137,7 +140,9 @@ pub async fn list_questions(
         ));
     }
 
-    let questions = state.storage.list_questions(None, &task_id, query.status.as_deref());
+    let questions = state
+        .storage
+        .list_questions(None, &task_id, query.status.as_deref());
     Ok(Json(questions))
 }
 
@@ -193,17 +198,19 @@ pub async fn resolve_question(
         ));
     }
 
-    let question = state.storage.resolve_question(
-        None,
-        &question_id,
-        &input.resolution,
-        identity.author_type(),
-        identity.author_id(),
-    )
-    .ok_or((
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Question is not open"})),
-    ))?;
+    let question = state
+        .storage
+        .resolve_question(
+            None,
+            &question_id,
+            &input.resolution,
+            identity.author_type(),
+            identity.author_id(),
+        )
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Question is not open"})),
+        ))?;
 
     // Emit task.question_resolved event
     let payload = serde_json::json!({
@@ -269,7 +276,10 @@ pub async fn my_questions(
         }
     };
 
-    let questions = state.storage.list_questions_for_agent(None, &agent_id, query.status.as_deref());
+    let questions =
+        state
+            .storage
+            .list_questions_for_agent(None, &agent_id, query.status.as_deref());
     Ok(Json(questions))
 }
 
@@ -288,8 +298,12 @@ pub async fn project_questions(
     }
 
     let unrouted = query.unrouted.unwrap_or(false);
-    let questions =
-        state.storage.list_questions_for_project(None, &project_id, query.status.as_deref(), unrouted);
+    let questions = state.storage.list_questions_for_project(
+        None,
+        &project_id,
+        query.status.as_deref(),
+        unrouted,
+    );
     Ok(Json(questions))
 }
 
@@ -354,7 +368,11 @@ pub async fn create_reply(
     let event_id = state.storage.get_last_event_id(None);
     let reply_preview: String = reply.body.chars().take(150).collect();
     let actor_name = identity.display_name();
-    let notif_type = if is_resolution { "question_resolved" } else { "question_replied" };
+    let notif_type = if is_resolution {
+        "question_resolved"
+    } else {
+        "question_replied"
+    };
     let notif_title = if is_resolution {
         format!("Question resolved on: {}", task.title)
     } else {
@@ -449,10 +467,13 @@ pub async fn dismiss_question(
         ));
     }
 
-    let question = state.storage.dismiss_question(None, &question_id, &input.reason).ok_or((
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Question is not open"})),
-    ))?;
+    let question = state
+        .storage
+        .dismiss_question(None, &question_id, &input.reason)
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Question is not open"})),
+        ))?;
 
     let payload = serde_json::json!({
         "task_title": task.title,
@@ -496,7 +517,9 @@ pub async fn assign_question(
         ));
     }
 
-    let question = state.storage.assign_question(None, &question_id, &input.target_type, &input.target_id)
+    let question = state
+        .storage
+        .assign_question(None, &question_id, &input.target_type, &input.target_id)
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "Failed to assign question"})),

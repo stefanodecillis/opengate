@@ -4,7 +4,10 @@ use opengate::app;
 use opengate::mcp;
 
 #[derive(Parser)]
-#[command(name = "opengate", about = "Headless agent-first task management engine")]
+#[command(
+    name = "opengate",
+    about = "Headless agent-first task management engine"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

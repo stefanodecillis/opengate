@@ -1,4 +1,4 @@
-use axum::{Json};
+use axum::Json;
 
 use opengate_models::*;
 

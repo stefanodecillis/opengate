@@ -16,10 +16,10 @@ pub async fn list_agents(
 
     if let Some(ref cap) = query.capability {
         agents.retain(|agent| {
-            agent.capabilities.iter().any(|ac| {
-                ac == cap
-                    || (!cap.contains(':') && ac.starts_with(&format!("{cap}:")))
-            })
+            agent
+                .capabilities
+                .iter()
+                .any(|ac| ac == cap || (!cap.contains(':') && ac.starts_with(&format!("{cap}:"))))
         });
     }
 
@@ -187,7 +187,11 @@ pub async fn my_notifications(
             ))
         }
     };
-    Ok(Json(state.storage.list_notifications(None, &agent_id, query.unread)))
+    Ok(Json(state.storage.list_notifications(
+        None,
+        &agent_id,
+        query.unread,
+    )))
 }
 
 pub async fn ack_notification(

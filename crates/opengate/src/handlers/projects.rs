@@ -26,7 +26,9 @@ pub async fn create_project(
     identity: Identity,
     Json(input): Json<CreateProject>,
 ) -> Result<(StatusCode, Json<Project>), (StatusCode, Json<serde_json::Value>)> {
-    let project = state.storage.create_project(None, &input, identity.author_id());
+    let project = state
+        .storage
+        .create_project(None, &input, identity.author_id());
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -113,6 +115,8 @@ pub async fn get_schedule(
             Json(serde_json::json!({"error": "Project not found"})),
         ));
     }
-    let entries = state.storage.get_schedule(None, &id, query.from.as_deref(), query.to.as_deref());
+    let entries = state
+        .storage
+        .get_schedule(None, &id, query.from.as_deref(), query.to.as_deref());
     Ok(Json(entries))
 }

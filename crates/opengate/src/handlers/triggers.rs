@@ -98,7 +98,10 @@ pub async fn receive_webhook(
         }
     };
 
-    let (trigger, secret_hash) = match state.storage.get_webhook_trigger_for_validation(None, &trigger_id) {
+    let (trigger, secret_hash) = match state
+        .storage
+        .get_webhook_trigger_for_validation(None, &trigger_id)
+    {
         Some(v) => v,
         None => {
             return (
@@ -239,9 +242,7 @@ fn execute_create_task(
         .ok_or("Missing title in action_config")?;
     let title = interpolate(title_tpl, payload);
 
-    let description = cfg["description"]
-        .as_str()
-        .map(|d| interpolate(d, payload));
+    let description = cfg["description"].as_str().map(|d| interpolate(d, payload));
 
     let priority = cfg["priority"].as_str().map(|p| p.to_string());
 

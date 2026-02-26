@@ -263,7 +263,15 @@ async fn poll_and_wake(
     let waking_flag = waking.clone();
 
     tokio::spawn(async move {
-        let ok = do_wake(&name, &wake_mode, &openclaw_id, &webhook_url, &command, &summary).await;
+        let ok = do_wake(
+            &name,
+            &wake_mode,
+            &openclaw_id,
+            &webhook_url,
+            &command,
+            &summary,
+        )
+        .await;
         if !ok {
             log!(name, "Wake failed");
         }
