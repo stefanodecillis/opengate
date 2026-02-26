@@ -112,7 +112,7 @@ pub fn init_db(path: &str) -> Connection {
         [],
     );
     let _ = conn.execute(
-        "ALTER TABLE agents ADD COLUMN max_concurrent_tasks INTEGER DEFAULT 5",
+        "ALTER TABLE agents ADD COLUMN max_concurrent_tasks INTEGER DEFAULT 2",
         [],
     );
     let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);

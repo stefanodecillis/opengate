@@ -145,13 +145,6 @@ pub trait WebhookStore: Send + Sync {
     fn update_webhook_log(&self, tenant: Option<&str>, id: &str, status: &str, attempts: i64, response_status: Option<i64>, response_body: Option<&str>);
 }
 
-pub trait UsageStore: Send + Sync {
-    fn report_task_usage(&self, tenant: Option<&str>, task_id: &str, agent_id: &str, input: &ReportUsage) -> TaskUsage;
-    fn get_task_usage(&self, tenant: Option<&str>, task_id: &str) -> Vec<TaskUsage>;
-    fn get_project_usage(&self, tenant: Option<&str>, project_id: &str, from: Option<&str>, to: Option<&str>) -> ProjectUsageReport;
-    fn get_agent_usage(&self, tenant: Option<&str>, agent_id: &str, from: Option<&str>, to: Option<&str>) -> Vec<TaskUsage>;
-}
-
 pub trait StatsStore: Send + Sync {
     fn get_stats(&self, tenant: Option<&str>) -> DashboardStats;
 }
@@ -167,7 +160,6 @@ pub trait StorageBackend:
     + QuestionStore
     + EventStore
     + WebhookStore
-    + UsageStore
     + StatsStore
 {
     /// Hash an API key (utility, doesn't need &self but lives here for convenience).

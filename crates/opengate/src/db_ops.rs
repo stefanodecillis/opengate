@@ -1521,7 +1521,7 @@ fn get_activity(conn: &Connection, id: &str) -> Option<TaskActivity> {
 pub fn list_activity(conn: &Connection, task_id: &str) -> Vec<TaskActivity> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, task_id, author_type, author_id, content, activity_type, metadata, created_at FROM task_activity WHERE task_id = ?1 ORDER BY created_at ASC",
+            "SELECT id, task_id, author_type, author_id, content, activity_type, metadata, created_at FROM task_activity WHERE task_id = ?1 ORDER BY created_at DESC",
         )
         .unwrap();
 
@@ -1556,7 +1556,7 @@ fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agen
         .unwrap_or_default();
     let config_str: Option<String> = row.get(8)?;
     let config = config_str.and_then(|s| serde_json::from_str(&s).ok());
-    let max_concurrent: i64 = row.get::<_, Option<i64>>(6)?.unwrap_or(5);
+    let max_concurrent: i64 = row.get::<_, Option<i64>>(6)?.unwrap_or(2);
 
     // Count actively working tasks (in_progress only — this determines capacity)
     let current_task_count: i64 = conn.query_row(
@@ -3122,8 +3122,8 @@ pub fn get_pulse(
     project_id: &str,
     caller_agent_id: Option<&str>,
 ) -> PulseResponse {
-    // Active tasks (in_progress)
-    let active_tasks = pulse_tasks_by_status(conn, project_id, "in_progress");
+    // Active tasks (backlog, todo, in_progress, handoff)
+    let active_tasks = pulse_tasks_by_statuses(conn, project_id, &["backlog", "todo", "in_progress", "handoff"]);
 
     // Blocked tasks
     let blocked_tasks = pulse_tasks_by_status(conn, project_id, "blocked");
@@ -3180,7 +3180,7 @@ pub fn get_pulse(
             let agent_id: String = row.get(0)?;
             let name: String = row.get(1)?;
             let last_seen: Option<String> = row.get(2)?;
-            let max_concurrent: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(5);
+            let max_concurrent: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(2);
             let seniority: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "mid".to_string());
             let role: String = row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "executor".to_string());
             let stale_timeout: i64 = row.get::<_, Option<i64>>(6)?.unwrap_or(30);
@@ -3248,15 +3248,6 @@ pub fn get_pulse(
         )
         .unwrap_or(0);
 
-    let total_cost_usd: f64 = conn.query_row(
-        "SELECT COALESCE(SUM(tu.cost_usd), 0.0)
-         FROM task_usage tu
-         INNER JOIN tasks t ON t.id = tu.task_id
-         WHERE t.project_id = ?1",
-        params![project_id],
-        |row| row.get(0),
-    ).unwrap_or(0.0);
-
     PulseResponse {
         active_tasks,
         blocked_tasks,
@@ -3266,7 +3257,6 @@ pub fn get_pulse(
         agents,
         recent_knowledge_updates,
         blocked_by_deps,
-        total_cost_usd,
     }
 }
 
@@ -3278,6 +3268,29 @@ fn pulse_tasks_by_status(conn: &Connection, project_id: &str, status: &str) -> V
     )
     .unwrap()
     .query_map(params![project_id, status], |row| {
+        Ok(pulse_task_from_row(conn, row))
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+fn pulse_tasks_by_statuses(conn: &Connection, project_id: &str, statuses: &[&str]) -> Vec<PulseTask> {
+    let placeholders: Vec<String> = statuses.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
+    let sql = format!(
+        "SELECT t.id, t.title, t.status, t.priority, t.assignee_id, t.reviewer_id, t.updated_at
+         FROM tasks t WHERE t.project_id = ?1 AND t.status IN ({})
+         ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END",
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql).unwrap();
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params_vec.push(Box::new(project_id.to_string()));
+    for s in statuses {
+        params_vec.push(Box::new(s.to_string()));
+    }
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+    stmt.query_map(refs.as_slice(), |row| {
         Ok(pulse_task_from_row(conn, row))
     })
     .unwrap()
@@ -3371,132 +3384,6 @@ fn capability_match_score(agent_caps: &[String], required: &[String]) -> usize {
             ac == *req || (!req.contains(':') && ac.starts_with(&format!("{req}:")))
         })
     }).count()
-}
-
-// ─── Usage Tracking ───────────────────────────────────────────────────────────
-
-pub fn report_task_usage(conn: &Connection, task_id: &str, agent_id: &str, input: &ReportUsage) -> TaskUsage {
-    let id = Uuid::new_v4().to_string();
-    let now = now();
-    conn.execute(
-        "INSERT INTO task_usage (id, task_id, agent_id, input_tokens, output_tokens, cost_usd, reported_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, task_id, agent_id, input.input_tokens, input.output_tokens, input.cost_usd, now],
-    ).unwrap();
-    TaskUsage {
-        id,
-        task_id: task_id.to_string(),
-        agent_id: agent_id.to_string(),
-        input_tokens: input.input_tokens,
-        output_tokens: input.output_tokens,
-        cost_usd: input.cost_usd,
-        reported_at: now,
-    }
-}
-
-pub fn get_task_usage(conn: &Connection, task_id: &str) -> Vec<TaskUsage> {
-    conn.prepare(
-        "SELECT id, task_id, agent_id, input_tokens, output_tokens, cost_usd, reported_at
-         FROM task_usage WHERE task_id = ?1 ORDER BY reported_at ASC"
-    ).unwrap()
-    .query_map(params![task_id], |row| Ok(TaskUsage {
-        id: row.get(0)?,
-        task_id: row.get(1)?,
-        agent_id: row.get(2)?,
-        input_tokens: row.get(3)?,
-        output_tokens: row.get(4)?,
-        cost_usd: row.get(5)?,
-        reported_at: row.get(6)?,
-    })).unwrap().filter_map(|r| r.ok()).collect()
-}
-
-pub fn get_project_usage(conn: &Connection, project_id: &str, from: Option<&str>, to: Option<&str>) -> ProjectUsageReport {
-    let mut where_clauses = vec!["t.project_id = ?1".to_string()];
-    let mut params_vec: Vec<String> = vec![project_id.to_string()];
-    let mut idx = 2usize;
-    if let Some(f) = from {
-        where_clauses.push(format!("tu.reported_at >= ?{}", idx));
-        params_vec.push(f.to_string());
-        idx += 1;
-    }
-    if let Some(t) = to {
-        where_clauses.push(format!("tu.reported_at <= ?{}", idx));
-        params_vec.push(t.to_string());
-    }
-    let where_str = where_clauses.join(" AND ");
-    let p: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-
-    // Totals
-    let (total_in, total_out, total_cost): (i64, i64, f64) = conn.query_row(
-        &format!("SELECT COALESCE(SUM(tu.input_tokens),0), COALESCE(SUM(tu.output_tokens),0), COALESCE(SUM(tu.cost_usd),0.0)
-         FROM task_usage tu INNER JOIN tasks t ON t.id = tu.task_id WHERE {}", where_str),
-        p.as_slice(), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).unwrap_or((0, 0, 0.0));
-
-    // By agent
-    let p2: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-    let by_agent: Vec<AgentUsageSummary> = conn.prepare(
-        &format!("SELECT tu.agent_id, a.name, SUM(tu.input_tokens), SUM(tu.output_tokens), COALESCE(SUM(tu.cost_usd),0.0), COUNT(*)
-         FROM task_usage tu
-         INNER JOIN tasks t ON t.id = tu.task_id
-         LEFT JOIN agents a ON a.id = tu.agent_id
-         WHERE {} GROUP BY tu.agent_id ORDER BY SUM(tu.cost_usd) DESC NULLS LAST", where_str)
-    ).unwrap()
-    .query_map(p2.as_slice(), |row| Ok(AgentUsageSummary {
-        agent_id: row.get(0)?,
-        agent_name: row.get(1)?,
-        total_input_tokens: row.get(2)?,
-        total_output_tokens: row.get(3)?,
-        total_cost_usd: row.get(4)?,
-        report_count: row.get(5)?,
-    })).unwrap().filter_map(|r| r.ok()).collect();
-
-    // By task
-    let p3: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-    let by_task: Vec<TaskUsageSummary> = conn.prepare(
-        &format!("SELECT tu.task_id, t.title, SUM(tu.input_tokens), SUM(tu.output_tokens), COALESCE(SUM(tu.cost_usd),0.0), COUNT(*)
-         FROM task_usage tu
-         INNER JOIN tasks t ON t.id = tu.task_id
-         WHERE {} GROUP BY tu.task_id ORDER BY SUM(tu.cost_usd) DESC NULLS LAST", where_str)
-    ).unwrap()
-    .query_map(p3.as_slice(), |row| Ok(TaskUsageSummary {
-        task_id: row.get(0)?,
-        task_title: row.get(1)?,
-        total_input_tokens: row.get(2)?,
-        total_output_tokens: row.get(3)?,
-        total_cost_usd: row.get(4)?,
-        report_count: row.get(5)?,
-    })).unwrap().filter_map(|r| r.ok()).collect();
-
-    ProjectUsageReport { total_input_tokens: total_in, total_output_tokens: total_out, total_cost_usd: total_cost, by_agent, by_task }
-}
-
-pub fn get_agent_usage(conn: &Connection, agent_id: &str, from: Option<&str>, to: Option<&str>) -> Vec<TaskUsage> {
-    let mut where_clauses = vec!["agent_id = ?1".to_string()];
-    let mut params_vec: Vec<String> = vec![agent_id.to_string()];
-    let mut idx = 2usize;
-    if let Some(f) = from {
-        where_clauses.push(format!("reported_at >= ?{}", idx));
-        params_vec.push(f.to_string());
-        idx += 1;
-    }
-    if let Some(t) = to {
-        where_clauses.push(format!("reported_at <= ?{}", idx));
-        params_vec.push(t.to_string());
-    }
-    let sql = format!("SELECT id, task_id, agent_id, input_tokens, output_tokens, cost_usd, reported_at
-         FROM task_usage WHERE {} ORDER BY reported_at ASC", where_clauses.join(" AND "));
-    let p: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-    conn.prepare(&sql).unwrap()
-    .query_map(p.as_slice(), |row| Ok(TaskUsage {
-        id: row.get(0)?,
-        task_id: row.get(1)?,
-        agent_id: row.get(2)?,
-        input_tokens: row.get(3)?,
-        output_tokens: row.get(4)?,
-        cost_usd: row.get(5)?,
-        reported_at: row.get(6)?,
-    })).unwrap().filter_map(|r| r.ok()).collect()
 }
 
 // ===== Inbound Webhook Triggers =====

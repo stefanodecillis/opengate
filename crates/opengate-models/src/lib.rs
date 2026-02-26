@@ -640,68 +640,6 @@ pub struct PulseResponse {
     pub recent_knowledge_updates: Vec<PulseKnowledge>,
     /// Number of tasks currently blocked by unmet dependencies
     pub blocked_by_deps: i64,
-    /// Total USD cost across all tasks in this project (from reported usage)
-    pub total_cost_usd: f64,
-}
-
-// --- Usage Tracking ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskUsage {
-    pub id: String,
-    pub task_id: String,
-    pub agent_id: String,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub cost_usd: Option<f64>,
-    pub reported_at: String,
-}
-
-/// POST body for reporting usage
-#[derive(Debug, Deserialize)]
-pub struct ReportUsage {
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub cost_usd: Option<f64>,
-}
-
-/// Per-agent aggregated usage (for project/agent summaries)
-#[derive(Debug, Serialize)]
-pub struct AgentUsageSummary {
-    pub agent_id: String,
-    pub agent_name: Option<String>,
-    pub total_input_tokens: i64,
-    pub total_output_tokens: i64,
-    pub total_cost_usd: f64,
-    pub report_count: i64,
-}
-
-/// Per-task aggregated usage
-#[derive(Debug, Serialize)]
-pub struct TaskUsageSummary {
-    pub task_id: String,
-    pub task_title: Option<String>,
-    pub total_input_tokens: i64,
-    pub total_output_tokens: i64,
-    pub total_cost_usd: f64,
-    pub report_count: i64,
-}
-
-/// Project usage response
-#[derive(Debug, Serialize)]
-pub struct ProjectUsageReport {
-    pub total_input_tokens: i64,
-    pub total_output_tokens: i64,
-    pub total_cost_usd: f64,
-    pub by_agent: Vec<AgentUsageSummary>,
-    pub by_task: Vec<TaskUsageSummary>,
-}
-
-/// Date range query params
-#[derive(Debug, Deserialize)]
-pub struct UsageDateRange {
-    pub from: Option<String>,
-    pub to: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -157,10 +157,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/tasks/:id/activity",
             get(handlers::activity::list_activity).post(handlers::activity::create_activity),
         )
-        // Usage tracking
-        .route("/api/tasks/:id/usage", get(handlers::usage::get_task_usage).post(handlers::usage::report_usage))
-        .route("/api/projects/:id/usage", get(handlers::usage::get_project_usage))
-        .route("/api/agents/:id/usage", get(handlers::usage::get_agent_usage_range))
         // Artifacts
         .route(
             "/api/tasks/:id/artifacts",

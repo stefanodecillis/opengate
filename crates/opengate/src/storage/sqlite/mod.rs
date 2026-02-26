@@ -313,21 +313,6 @@ impl WebhookStore for SqliteBackend {
     }
 }
 
-impl UsageStore for SqliteBackend {
-    fn report_task_usage(&self, _tenant: Option<&str>, task_id: &str, agent_id: &str, input: &ReportUsage) -> TaskUsage {
-        db_ops::report_task_usage(&self.lock(), task_id, agent_id, input)
-    }
-    fn get_task_usage(&self, _tenant: Option<&str>, task_id: &str) -> Vec<TaskUsage> {
-        db_ops::get_task_usage(&self.lock(), task_id)
-    }
-    fn get_project_usage(&self, _tenant: Option<&str>, project_id: &str, from: Option<&str>, to: Option<&str>) -> ProjectUsageReport {
-        db_ops::get_project_usage(&self.lock(), project_id, from, to)
-    }
-    fn get_agent_usage(&self, _tenant: Option<&str>, agent_id: &str, from: Option<&str>, to: Option<&str>) -> Vec<TaskUsage> {
-        db_ops::get_agent_usage(&self.lock(), agent_id, from, to)
-    }
-}
-
 impl StatsStore for SqliteBackend {
     fn get_stats(&self, _tenant: Option<&str>) -> DashboardStats {
         db_ops::get_stats(&self.lock())
