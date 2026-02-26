@@ -909,8 +909,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "opengate"
-version = "0.1.1"
+name = "opengate-bridge"
+version = "0.1.2"
+dependencies = [
+ "chrono",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "opengate-core"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -931,21 +944,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "opengate-bridge"
-version = "0.1.1"
-dependencies = [
- "chrono",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "toml",
-]
-
-[[package]]
 name = "opengate-models"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
