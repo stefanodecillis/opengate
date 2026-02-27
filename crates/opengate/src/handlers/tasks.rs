@@ -289,26 +289,6 @@ pub async fn complete_task(
         ));
     }
 
-    if current_status == TaskStatus::InProgress {
-        if let Identity::AgentIdentity { id: agent_id, .. } = &identity {
-            if let Some(agent) = state.storage.get_agent(None, agent_id) {
-                let seniority = agent.seniority.as_str();
-                if seniority != "senior" {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({
-                            "error": format!(
-                                "Agents with seniority '{}' must submit for review before completing. \
-                                 Use POST /api/tasks/{}/submit-review instead.",
-                                seniority, id
-                            )
-                        })),
-                    ));
-                }
-            }
-        }
-    }
-
     match state.storage.update_task(
         None,
         &id,
