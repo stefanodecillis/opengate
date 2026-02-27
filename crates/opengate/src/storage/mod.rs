@@ -431,4 +431,12 @@ pub trait StorageBackend:
 {
     /// Hash an API key (utility, doesn't need &self but lives here for convenience).
     fn hash_api_key(&self, key: &str) -> String;
+
+    /// Like get_task, but also loads the activity timeline.
+    /// Use at return boundaries (MCP/REST handlers), not for internal validation.
+    fn get_task_full(&self, tenant: Option<&str>, id: &str) -> Option<Task> {
+        let mut task = self.get_task(tenant, id)?;
+        task.activities = self.list_activity(tenant, &task.id);
+        Some(task)
+    }
 }

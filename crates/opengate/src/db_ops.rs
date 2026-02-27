@@ -395,6 +395,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         created_by: row.get(14)?,
         created_at: row.get(15)?,
         updated_at: row.get(16)?,
+        activities: vec![],
     })
 }
 
@@ -594,6 +595,14 @@ pub fn get_task(conn: &Connection, id: &str) -> Option<Task> {
     let sql = format!("SELECT {} FROM tasks WHERE id = ?1", TASK_COLS);
     let task = conn.query_row(&sql, params![id], row_to_task).ok()?;
     Some(load_task_with_tags(conn, task))
+}
+
+/// Like get_task, but also loads the activity timeline.
+/// Use at return boundaries (MCP/REST handlers), not for internal validation.
+pub fn get_task_full(conn: &Connection, id: &str) -> Option<Task> {
+    let mut task = get_task(conn, id)?;
+    task.activities = list_activity(conn, &task.id);
+    Some(task)
 }
 
 pub fn list_tasks(conn: &Connection, filters: &TaskFilters) -> Vec<Task> {

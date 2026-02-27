@@ -161,6 +161,8 @@ pub struct Task {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activities: Vec<TaskActivity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

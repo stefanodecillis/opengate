@@ -63,7 +63,7 @@ pub async fn get_task(
     _identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.get_task(None, &id) {
+    match state.storage.get_task_full(None, &id) {
         Some(task) => Ok(Json(task)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -218,7 +218,8 @@ pub async fn claim_task(
     };
 
     match state.storage.claim_task(None, &id, &agent_id, &agent_name) {
-        Ok(task) => {
+        Ok(mut task) => {
+            task.activities = state.storage.list_activity(None, &task.id);
             let mut pending = events::emit_task_event(
                 &*state.storage,
                 &identity,

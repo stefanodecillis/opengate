@@ -499,7 +499,7 @@ fn call_get_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let task = db_ops::get_task(&ctx.conn, id).ok_or_else(|| "Task not found".to_string())?;
+    let task = db_ops::get_task_full(&ctx.conn, id).ok_or_else(|| "Task not found".to_string())?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -625,7 +625,8 @@ fn call_claim_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let task = db_ops::claim_task(&ctx.conn, id, &ctx.agent_id, &ctx.agent_name)?;
+    let mut task = db_ops::claim_task(&ctx.conn, id, &ctx.agent_id, &ctx.agent_name)?;
+    task.activities = db_ops::list_activity(&ctx.conn, &task.id);
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -753,7 +754,10 @@ fn call_next_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .unwrap_or_default();
 
     match db_ops::get_next_task(&ctx.conn, &skills) {
-        Some(task) => Ok(serde_json::to_value(&task).unwrap()),
+        Some(mut task) => {
+            task.activities = db_ops::list_activity(&ctx.conn, &task.id);
+            Ok(serde_json::to_value(&task).unwrap())
+        }
         None => Err("No matching tasks available".to_string()),
     }
 }
