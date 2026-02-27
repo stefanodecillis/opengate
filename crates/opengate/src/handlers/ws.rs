@@ -54,6 +54,8 @@ enum ServerMessage {
         event: String,
         data: serde_json::Value,
     },
+    #[serde(rename = "ping")]
+    Ping,
     #[serde(rename = "pong")]
     Pong,
     #[serde(rename = "error")]
@@ -148,6 +150,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         return;
     }
 
+    // Heartbeat is updated only after auth_ok is confirmed sent, so we don't
+    // record a heartbeat for a connection that never fully opened.
+    state.storage.update_heartbeat(None, &agent_id);
+
     // -----------------------------------------------------------------------
     // Phase 2: Authenticated session
     // -----------------------------------------------------------------------
@@ -179,7 +185,6 @@ async fn wait_for_auth(socket: &mut WebSocket, state: &AppState) -> Option<(Stri
                             Ok(ClientMessage::Auth { token }) => {
                                 let hash = state.storage.hash_api_key(&token);
                                 if let Some(agent) = state.storage.get_agent_by_key_hash(None, &hash) {
-                                    state.storage.update_heartbeat(None, &agent.id);
                                     return Some((agent.id, agent.name));
                                 } else {
                                     let _ = send_msg(socket, &ServerMessage::Error {
@@ -234,7 +239,7 @@ async fn run_session(
         tokio::select! {
             // Server ping keepalive
             _ = ping_interval.tick() => {
-                if send_msg(&mut socket, &ServerMessage::Pong).await.is_err() {
+                if send_msg(&mut socket, &ServerMessage::Ping).await.is_err() {
                     break;
                 }
             }
