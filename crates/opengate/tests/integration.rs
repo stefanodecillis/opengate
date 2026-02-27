@@ -3769,3 +3769,66 @@ async fn test_review_task_count_in_agent_response() {
         "current_task_count should be 0 (task is in review, not in_progress)"
     );
 }
+
+// Pre-assigned task: assign then claim should transition to in_progress
+#[tokio::test]
+async fn test_claim_preassigned_task() {
+    let s = TestServer::start().await;
+
+    // Heartbeat so agent is online
+    s.client()
+        .post(format!("{}/api/agents/heartbeat", s.base_url))
+        .header("Authorization", s.auth_header())
+        .send()
+        .await
+        .unwrap();
+
+    let project = s.create_project("Test Project - Pre-assigned Claim").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "Test Pre-assigned Claim").await;
+    let task_id = task["id"].as_str().unwrap();
+
+    // Step 1: Assign to agent (status stays "todo")
+    let resp = s
+        .client()
+        .post(format!("{}/api/tasks/{}/assign", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "agent_id": s.agent_id() }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "todo", "assign should keep status as todo");
+    assert_eq!(body["assignee_id"].as_str().unwrap(), s.agent_id());
+
+    // Step 2: Agent claims the pre-assigned task → should transition to in_progress
+    let resp = s
+        .client()
+        .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["status"], "in_progress",
+        "claim on pre-assigned task should transition to in_progress"
+    );
+
+    // Step 3: Claim again → idempotent, still in_progress
+    let resp = s
+        .client()
+        .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["status"], "in_progress",
+        "second claim should be idempotent"
+    );
+}

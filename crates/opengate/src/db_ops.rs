@@ -1200,14 +1200,19 @@ pub fn claim_task(
 ) -> Result<Task, String> {
     let task = get_task(conn, task_id).ok_or_else(|| "Task not found".to_string())?;
 
-    // Idempotent: if already claimed by same agent, return success
+    // Idempotent: if already claimed by same agent AND already in_progress, return as-is.
+    // If pre-assigned (todo) by same agent, fall through to transition to in_progress.
     if task.assignee_id.as_deref() == Some(agent_id)
         && task.assignee_type.as_deref() == Some("agent")
     {
-        return Ok(task);
+        let status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
+        if status == TaskStatus::InProgress {
+            return Ok(task);
+        }
+        // Pre-assigned but not yet executing → fall through to normal claim flow
     }
 
-    if task.assignee_id.is_some() {
+    if task.assignee_id.is_some() && task.assignee_id.as_deref() != Some(agent_id) {
         return Err("Task is already claimed by another agent".to_string());
     }
 
