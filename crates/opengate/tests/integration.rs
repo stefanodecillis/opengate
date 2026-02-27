@@ -2438,6 +2438,8 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
         &opengate_models::CreateProject {
             name: "Stale Q Project".to_string(),
             description: None,
+            repo_url: None,
+            default_branch: None,
         },
         &agent.id,
     );
@@ -3038,6 +3040,8 @@ async fn test_auto_target_zero_matches() {
         &opengate_models::CreateProject {
             name: "AT0 Project".to_string(),
             description: None,
+            repo_url: None,
+            default_branch: None,
         },
         &agent.id,
     );
@@ -3115,6 +3119,8 @@ async fn test_auto_target_single_exact_match() {
         &opengate_models::CreateProject {
             name: "AT1 Project".to_string(),
             description: None,
+            repo_url: None,
+            default_branch: None,
         },
         &creator.id,
     );
@@ -3189,6 +3195,8 @@ async fn test_auto_target_multiple_matches() {
         &opengate_models::CreateProject {
             name: "ATM Project".to_string(),
             description: None,
+            repo_url: None,
+            default_branch: None,
         },
         &agent1.id,
     );
