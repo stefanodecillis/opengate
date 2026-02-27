@@ -185,10 +185,7 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::agents::delete_agent),
         )
         .route("/api/agents/heartbeat", post(handlers::agents::heartbeat))
-        .route(
-            "/api/agents/me",
-            patch(handlers::agents::update_agent_self),
-        )
+        .route("/api/agents/me", patch(handlers::agents::update_agent_self))
         .route("/api/agents/me/inbox", get(handlers::agents::inbox))
         .route(
             "/api/agents/me/questions",
@@ -240,7 +237,9 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/webhooks/trigger/:trigger_id",
             post(handlers::triggers::receive_webhook),
-        );
+        )
+        // WebSocket
+        .route("/api/ws", get(handlers::ws::ws_handler));
 
     api.fallback(|| async { (StatusCode::NOT_FOUND, "Not found") })
         .layer(cors)

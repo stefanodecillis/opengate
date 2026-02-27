@@ -11,3 +11,4 @@ pub mod stats;
 pub mod tasks;
 pub mod triggers;
 pub mod webhooks;
+pub mod ws;
