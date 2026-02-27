@@ -46,7 +46,11 @@ impl TaskStatus {
 
     pub fn valid_transitions(&self) -> Vec<TaskStatus> {
         match self {
-            TaskStatus::Backlog => vec![TaskStatus::Todo, TaskStatus::Cancelled],
+            TaskStatus::Backlog => vec![
+                TaskStatus::Todo,
+                TaskStatus::InProgress,
+                TaskStatus::Cancelled,
+            ],
             TaskStatus::Todo => vec![
                 TaskStatus::InProgress,
                 TaskStatus::Blocked,
