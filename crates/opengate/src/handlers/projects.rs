@@ -18,7 +18,11 @@ pub async fn list_projects(
     identity: Identity,
     Query(query): Query<ProjectListQuery>,
 ) -> Json<Vec<Project>> {
-    Json(state.storage.list_projects(identity.tenant_id(), query.status.as_deref()))
+    Json(
+        state
+            .storage
+            .list_projects(identity.tenant_id(), query.status.as_deref()),
+    )
 }
 
 pub async fn create_project(

@@ -450,10 +450,16 @@ pub struct NextTaskQuery {
 
 #[derive(Debug, Clone)]
 pub enum Identity {
-    AgentIdentity { id: String, name: String },
+    AgentIdentity {
+        id: String,
+        name: String,
+    },
     /// A human user. `tenant_id` is used for multi-tenant data isolation (e.g. in TaskForge).
     /// The OSS single-tenant engine ignores it; multi-tenant backends filter by it.
-    Human { id: String, tenant_id: Option<String> },
+    Human {
+        id: String,
+        tenant_id: Option<String>,
+    },
     Anonymous,
 }
 
