@@ -128,6 +128,8 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
     pub status: String,
+    pub repo_url: Option<String>,
+    pub default_branch: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -230,6 +232,8 @@ pub struct Agent {
 pub struct CreateProject {
     pub name: String,
     pub description: Option<String>,
+    pub repo_url: Option<String>,
+    pub default_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,6 +241,8 @@ pub struct UpdateProject {
     pub name: Option<String>,
     pub description: Option<String>,
     pub status: Option<String>,
+    pub repo_url: Option<String>,
+    pub default_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

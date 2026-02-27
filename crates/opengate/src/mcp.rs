@@ -134,7 +134,9 @@ fn handle_tools_list() -> Result<Value, Value> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Project name"},
-                    "description": {"type": "string", "description": "Project description"}
+                    "description": {"type": "string", "description": "Project description"},
+                    "repo_url": {"type": "string", "description": "Git repository URL"},
+                    "default_branch": {"type": "string", "description": "Default branch name (e.g. main)"}
                 },
                 "required": ["name"]
             })),
@@ -469,9 +471,19 @@ fn call_create_project(ctx: &McpContext, args: &Value) -> Result<Value, String> 
         .get("description")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let repo_url = args
+        .get("repo_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let default_branch = args
+        .get("default_branch")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let input = CreateProject {
         name: name.to_string(),
         description,
+        repo_url,
+        default_branch,
     };
     let project = db_ops::create_project(&ctx.conn, &input, &ctx.agent_id);
     Ok(serde_json::to_value(&project).unwrap())

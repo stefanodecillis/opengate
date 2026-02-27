@@ -26,20 +26,20 @@ pub async fn get_schema() -> Json<serde_json::Value> {
                 "method": "POST",
                 "path": "/api/projects",
                 "description": "Create a new project",
-                "body": {"name": "string", "description": "string?"},
+                "body": {"name": "string", "description": "string?", "repo_url": "string?", "default_branch": "string?"},
                 "auth": true
             },
             {
                 "method": "GET",
                 "path": "/api/projects/{id}",
-                "description": "Get project details with task stats",
+                "description": "Get project details with task stats (includes repo_url and default_branch)",
                 "auth": true
             },
             {
                 "method": "PATCH",
                 "path": "/api/projects/{id}",
                 "description": "Update project",
-                "body": {"name": "string?", "description": "string?", "status": "string?"},
+                "body": {"name": "string?", "description": "string?", "status": "string?", "repo_url": "string?", "default_branch": "string?"},
                 "auth": true
             },
             {

@@ -432,11 +432,27 @@ pub trait StorageBackend:
     /// Hash an API key (utility, doesn't need &self but lives here for convenience).
     fn hash_api_key(&self, key: &str) -> String;
 
-    /// Like get_task, but also loads the activity timeline.
-    /// Use at return boundaries (MCP/REST handlers), not for internal validation.
+    /// Like get_task, but also loads the activity timeline and enriches
+    /// context with project repo metadata (read-time only, not persisted).
     fn get_task_full(&self, tenant: Option<&str>, id: &str) -> Option<Task> {
         let mut task = self.get_task(tenant, id)?;
         task.activities = self.list_activity(tenant, &task.id);
+
+        // Enrich context with project repo info if not already set
+        if let Some(project) = self.get_project(tenant, &task.project_id) {
+            if let Some(ref repo_url) = project.repo_url {
+                let ctx = task.context.get_or_insert_with(|| serde_json::json!({}));
+                if let serde_json::Value::Object(ref mut map) = ctx {
+                    map.entry("repo_url")
+                        .or_insert_with(|| serde_json::json!(repo_url));
+                    if let Some(ref branch) = project.default_branch {
+                        map.entry("branch")
+                            .or_insert_with(|| serde_json::json!(branch));
+                    }
+                }
+            }
+        }
+
         Some(task)
     }
 }

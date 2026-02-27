@@ -454,8 +454,8 @@ pub fn create_project(conn: &Connection, input: &CreateProject, created_by: &str
     let id = Uuid::new_v4().to_string();
     let now = now();
     conn.execute(
-        "INSERT INTO projects (id, name, description, status, created_at, updated_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5)",
-        params![id, input.name, input.description, now, now],
+        "INSERT INTO projects (id, name, description, status, repo_url, default_branch, created_at, updated_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6, ?7)",
+        params![id, input.name, input.description, input.repo_url, input.default_branch, now, now],
     )
     .unwrap();
     let _ = created_by;
@@ -464,7 +464,7 @@ pub fn create_project(conn: &Connection, input: &CreateProject, created_by: &str
 
 pub fn get_project(conn: &Connection, id: &str) -> Option<Project> {
     conn.query_row(
-        "SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = ?1",
+        "SELECT id, name, description, status, repo_url, default_branch, created_at, updated_at FROM projects WHERE id = ?1",
         params![id],
         |row| {
             Ok(Project {
@@ -472,8 +472,10 @@ pub fn get_project(conn: &Connection, id: &str) -> Option<Project> {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 status: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                repo_url: row.get(4)?,
+                default_branch: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         },
     )
@@ -483,11 +485,11 @@ pub fn get_project(conn: &Connection, id: &str) -> Option<Project> {
 pub fn list_projects(conn: &Connection, status_filter: Option<&str>) -> Vec<Project> {
     let (sql, param_values): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match status_filter {
         Some(s) => (
-            "SELECT id, name, description, status, created_at, updated_at FROM projects WHERE status = ?1 ORDER BY updated_at DESC".to_string(),
+            "SELECT id, name, description, status, repo_url, default_branch, created_at, updated_at FROM projects WHERE status = ?1 ORDER BY updated_at DESC".to_string(),
             vec![Box::new(s.to_string())],
         ),
         None => (
-            "SELECT id, name, description, status, created_at, updated_at FROM projects ORDER BY updated_at DESC".to_string(),
+            "SELECT id, name, description, status, repo_url, default_branch, created_at, updated_at FROM projects ORDER BY updated_at DESC".to_string(),
             vec![],
         ),
     };
@@ -500,8 +502,10 @@ pub fn list_projects(conn: &Connection, status_filter: Option<&str>) -> Vec<Proj
             name: row.get(1)?,
             description: row.get(2)?,
             status: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+            repo_url: row.get(4)?,
+            default_branch: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     })
     .unwrap()
@@ -514,10 +518,15 @@ pub fn update_project(conn: &Connection, id: &str, input: &UpdateProject) -> Opt
     let name = input.name.as_deref().unwrap_or(&existing.name);
     let description = input.description.as_ref().or(existing.description.as_ref());
     let status = input.status.as_deref().unwrap_or(&existing.status);
+    let repo_url = input.repo_url.as_ref().or(existing.repo_url.as_ref());
+    let default_branch = input
+        .default_branch
+        .as_ref()
+        .or(existing.default_branch.as_ref());
     let now = now();
     conn.execute(
-        "UPDATE projects SET name = ?1, description = ?2, status = ?3, updated_at = ?4 WHERE id = ?5",
-        params![name, description, status, now, id],
+        "UPDATE projects SET name = ?1, description = ?2, status = ?3, repo_url = ?4, default_branch = ?5, updated_at = ?6 WHERE id = ?7",
+        params![name, description, status, repo_url, default_branch, now, id],
     )
     .unwrap();
     get_project(conn, id)
@@ -597,11 +606,27 @@ pub fn get_task(conn: &Connection, id: &str) -> Option<Task> {
     Some(load_task_with_tags(conn, task))
 }
 
-/// Like get_task, but also loads the activity timeline.
-/// Use at return boundaries (MCP/REST handlers), not for internal validation.
+/// Like get_task, but also loads the activity timeline and enriches
+/// context with project repo metadata (read-time only, not persisted).
 pub fn get_task_full(conn: &Connection, id: &str) -> Option<Task> {
     let mut task = get_task(conn, id)?;
     task.activities = list_activity(conn, &task.id);
+
+    // Enrich context with project repo info if not already set
+    if let Some(project) = get_project(conn, &task.project_id) {
+        if let Some(ref repo_url) = project.repo_url {
+            let ctx = task.context.get_or_insert_with(|| serde_json::json!({}));
+            if let serde_json::Value::Object(ref mut map) = ctx {
+                map.entry("repo_url")
+                    .or_insert_with(|| serde_json::json!(repo_url));
+                if let Some(ref branch) = project.default_branch {
+                    map.entry("branch")
+                        .or_insert_with(|| serde_json::json!(branch));
+                }
+            }
+        }
+    }
+
     Some(task)
 }
 

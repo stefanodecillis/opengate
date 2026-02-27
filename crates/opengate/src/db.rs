@@ -374,6 +374,10 @@ pub fn init_db(path: &str) -> Connection {
         [],
     );
 
+    // v18: project repo metadata for workspace isolation
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN repo_url TEXT", []);
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN default_branch TEXT", []);
+
     conn
 }
 
