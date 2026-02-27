@@ -15,10 +15,10 @@ pub struct ProjectListQuery {
 
 pub async fn list_projects(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Query(query): Query<ProjectListQuery>,
 ) -> Json<Vec<Project>> {
-    Json(state.storage.list_projects(None, query.status.as_deref()))
+    Json(state.storage.list_projects(identity.tenant_id(), query.status.as_deref()))
 }
 
 pub async fn create_project(
@@ -28,7 +28,7 @@ pub async fn create_project(
 ) -> Result<(StatusCode, Json<Project>), (StatusCode, Json<serde_json::Value>)> {
     let project = state
         .storage
-        .create_project(None, &input, identity.author_id());
+        .create_project(identity.tenant_id(), &input, identity.author_id());
     Ok((StatusCode::CREATED, Json(project)))
 }
 

@@ -9,7 +9,7 @@ pub async fn me(identity: Identity) -> Json<serde_json::Value> {
             "id": id,
             "name": name,
         })),
-        Identity::Human { id } => Json(serde_json::json!({
+        Identity::Human { id, .. } => Json(serde_json::json!({
             "type": "human",
             "id": id,
         })),
