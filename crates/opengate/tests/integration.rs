@@ -39,6 +39,7 @@ impl TestServer {
         let state = AppState {
             storage: Arc::new(storage),
             setup_token: "test-setup-token".to_string(),
+            event_bus: opengate::events::EventBus::default(),
         };
 
         let router = build_router(state);

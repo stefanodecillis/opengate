@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::db;
+use crate::events::EventBus;
 use crate::handlers;
 use crate::storage::StorageBackend;
 use opengate_models::CreateActivity;
@@ -15,6 +16,7 @@ use opengate_models::CreateActivity;
 pub struct AppState {
     pub storage: Arc<dyn StorageBackend>,
     pub setup_token: String,
+    pub event_bus: EventBus,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -250,6 +252,7 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
     let state = AppState {
         storage: storage.clone(),
         setup_token: setup_token.to_string(),
+        event_bus: EventBus::default(),
     };
 
     // Spawn background stale agent cleanup (with startup grace period)
