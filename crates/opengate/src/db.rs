@@ -368,6 +368,12 @@ pub fn init_db(path: &str) -> Connection {
     // v16: agent owner scoping
     let _ = conn.execute("ALTER TABLE agents ADD COLUMN owner_id TEXT", []);
 
+    // v17: agent tags (JSON array)
+    let _ = conn.execute(
+        "ALTER TABLE agents ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+
     conn
 }
 

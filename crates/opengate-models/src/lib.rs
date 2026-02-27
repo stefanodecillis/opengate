@@ -220,6 +220,8 @@ pub struct Agent {
     pub created_at: String,
     /// Optional owner (e.g. Clerk user_id). None in standalone OSS mode.
     pub owner_id: Option<String>,
+    /// Free-form category tags (e.g. ["rust", "frontend", "devops"])
+    pub tags: Vec<String>,
 }
 
 // --- DTOs ---
@@ -492,6 +494,8 @@ pub struct UpdateAgent {
     pub role: Option<String>,
     /// Minutes before agent is considered stale (default: 30)
     pub stale_timeout: Option<i64>,
+    /// Free-form category tags (e.g. ["rust", "frontend", "devops"])
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

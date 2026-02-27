@@ -260,9 +260,19 @@ fn handle_tools_list() -> Result<Value, Value> {
                 "type": "object",
                 "properties": {
                     "description": {"type": "string", "description": "Agent description"},
-                    "skills": {"type": "array", "items": {"type": "string"}, "description": "Agent skills"},
+                    "skills": {"type": "array", "items": {"type": "string"}, "description": "Agent skills (task-matching keywords)"},
                     "max_concurrent_tasks": {"type": "integer", "description": "Max concurrent tasks"},
-                    "webhook_url": {"type": "string", "description": "Webhook URL for notifications"}
+                    "webhook_url": {"type": "string", "description": "Webhook URL for notifications"},
+                    "webhook_events": {"type": "array", "items": {"type": "string"}, "description": "Event types to subscribe to (null = all)"},
+                    "config": {"type": "object", "description": "Arbitrary agent config JSON"},
+                    "model": {"type": "string", "description": "LLM model identifier"},
+                    "provider": {"type": "string", "description": "LLM provider"},
+                    "cost_tier": {"type": "string", "description": "Cost tier (free|standard|premium)"},
+                    "capabilities": {"type": "array", "items": {"type": "string"}, "description": "Capability strings (e.g. code-review:rust)"},
+                    "seniority": {"type": "string", "description": "Agent seniority: junior | mid | senior"},
+                    "role": {"type": "string", "description": "Agent role: executor | orchestrator"},
+                    "stale_timeout": {"type": "integer", "description": "Minutes before considered stale (default: 240)"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Category tags (e.g. [\"rust\", \"frontend\", \"devops\"])"}
                 }
             })),
             tool_def("assign_task", "Assign a task to a specific agent", json!({
@@ -865,6 +875,11 @@ fn call_update_agent_profile(ctx: &McpContext, args: &Value) -> Result<Value, St
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect()
         });
+    let tags = args.get("tags").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect()
+    });
     let input = UpdateAgent {
         description: args
             .get("description")
@@ -900,6 +915,7 @@ fn call_update_agent_profile(ctx: &McpContext, args: &Value) -> Result<Value, St
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         stale_timeout: args.get("stale_timeout").and_then(|v| v.as_i64()),
+        tags,
     };
     let agent = db_ops::update_agent(&ctx.conn, &ctx.agent_id, &input).ok_or("Agent not found")?;
     Ok(serde_json::to_value(&agent).unwrap())

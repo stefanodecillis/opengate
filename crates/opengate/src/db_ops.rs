@@ -1580,7 +1580,7 @@ pub fn list_activity(conn: &Connection, task_id: &str) -> Vec<TaskActivity> {
 
 // --- Agents ---
 
-const AGENT_COLS: &str = "id, name, api_key_hash, skills, description, status, max_concurrent_tasks, webhook_url, config, last_seen_at, created_at, model, provider, cost_tier, capabilities, seniority, role, webhook_events, stale_timeout, owner_id";
+const AGENT_COLS: &str = "id, name, api_key_hash, skills, description, status, max_concurrent_tasks, webhook_url, config, last_seen_at, created_at, model, provider, cost_tier, capabilities, seniority, role, webhook_events, stale_timeout, owner_id, tags";
 
 fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agent> {
     let id: String = row.get(0)?;
@@ -1629,6 +1629,11 @@ fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agen
 
     let stale_timeout: i64 = row.get::<_, Option<i64>>(18)?.unwrap_or(30);
 
+    let tags_str: Option<String> = row.get(20)?;
+    let tags: Vec<String> = tags_str
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
     Ok(Agent {
         id,
         name: row.get(1)?,
@@ -1656,6 +1661,7 @@ fn row_to_agent(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Agen
         last_seen_at: last_seen,
         created_at: row.get(10)?,
         owner_id: row.get(19)?,
+        tags,
     })
 }
 
@@ -1783,10 +1789,15 @@ pub fn update_agent(conn: &Connection, id: &str, input: &UpdateAgent) -> Option<
     let seniority = input.seniority.as_deref().unwrap_or(&existing.seniority);
     let role = input.role.as_deref().unwrap_or(&existing.role);
     let stale_timeout = input.stale_timeout.unwrap_or(existing.stale_timeout);
+    let tags_json = input
+        .tags
+        .as_ref()
+        .map(|t| serde_json::to_string(t).unwrap())
+        .unwrap_or_else(|| serde_json::to_string(&existing.tags).unwrap());
 
     conn.execute(
-        "UPDATE agents SET description=?1, skills=?2, max_concurrent_tasks=?3, webhook_url=?4, config=?5, model=?6, provider=?7, cost_tier=?8, capabilities=?9, seniority=?10, role=?11, webhook_events=?12, stale_timeout=?13 WHERE id=?14",
-        params![description, skills_json, max_concurrent, webhook_url, config_str, model, provider, cost_tier, capabilities_json, seniority, role, webhook_events_json, stale_timeout, id],
+        "UPDATE agents SET description=?1, skills=?2, max_concurrent_tasks=?3, webhook_url=?4, config=?5, model=?6, provider=?7, cost_tier=?8, capabilities=?9, seniority=?10, role=?11, webhook_events=?12, stale_timeout=?13, tags=?15 WHERE id=?14",
+        params![description, skills_json, max_concurrent, webhook_url, config_str, model, provider, cost_tier, capabilities_json, seniority, role, webhook_events_json, stale_timeout, id, tags_json],
     ).unwrap();
 
     get_agent(conn, id)
