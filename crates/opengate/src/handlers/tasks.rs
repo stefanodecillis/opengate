@@ -3,8 +3,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use chrono::Utc;
 
 use crate::app::AppState;
+use crate::events::Event;
 use crate::handlers::{events, webhooks};
 use opengate_models::*;
 
@@ -54,6 +56,14 @@ pub async fn create_task(
             metadata: None,
         },
     );
+
+    state.event_bus.emit(Event {
+        event_type: "task.created".to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::to_value(&task).unwrap_or_default(),
+        timestamp: Utc::now(),
+    });
 
     Ok((StatusCode::CREATED, Json(task)))
 }
@@ -117,6 +127,7 @@ pub async fn update_task(
                         };
                         let mut pending = events::emit_task_event(
                             &*state.storage,
+                            &state.event_bus,
                             &identity,
                             event_type,
                             &task,
@@ -127,8 +138,29 @@ pub async fn update_task(
                         webhooks::fire_notification_webhooks(state.storage.clone(), pending);
                         return Ok(Json(task));
                     }
+
+                    // Status changed but not to a special event type — emit generic status_changed
+                    state.event_bus.emit(Event {
+                        event_type: "task.status_changed".to_string(),
+                        project_id: Some(task.project_id.clone()),
+                        agent_id: task.assignee_id.clone(),
+                        data: serde_json::to_value(&task).unwrap_or_default(),
+                        timestamp: Utc::now(),
+                    });
+
+                    return Ok(Json(task));
                 }
             }
+
+            // Non-status update — emit task.updated
+            state.event_bus.emit(Event {
+                event_type: "task.updated".to_string(),
+                project_id: Some(task.project_id.clone()),
+                agent_id: task.assignee_id.clone(),
+                data: serde_json::to_value(&task).unwrap_or_default(),
+                timestamp: Utc::now(),
+            });
+
             Ok(Json(task))
         }
         Ok(None) => Err((
@@ -222,6 +254,7 @@ pub async fn claim_task(
             task.activities = state.storage.list_activity(None, &task.id);
             let mut pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.claimed",
                 &task,
@@ -230,6 +263,7 @@ pub async fn claim_task(
             );
             pending.extend(events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.assigned",
                 &task,
@@ -256,7 +290,16 @@ pub async fn release_task(
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     match state.storage.release_task(None, &id, identity.author_id()) {
-        Ok(task) => Ok(Json(task)),
+        Ok(task) => {
+            state.event_bus.emit(Event {
+                event_type: "task.released".to_string(),
+                project_id: Some(task.project_id.clone()),
+                agent_id: Some(identity.author_id().to_string()),
+                data: serde_json::to_value(&task).unwrap_or_default(),
+                timestamp: Utc::now(),
+            });
+            Ok(Json(task))
+        }
         Err(e) => Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": e.0})),
@@ -329,6 +372,7 @@ pub async fn complete_task(
             }
             pending.extend(events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.completed",
                 &task,
@@ -391,6 +435,7 @@ pub async fn block_task(
             );
             let pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.blocked",
                 &task,
@@ -476,6 +521,7 @@ pub async fn assign_task(
             );
             let pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.assigned",
                 &task,
@@ -510,6 +556,13 @@ pub async fn handoff_task(
         input.summary.as_deref(),
     ) {
         Ok(task) => {
+            state.event_bus.emit(Event {
+                event_type: "task.assigned".to_string(),
+                project_id: Some(task.project_id.clone()),
+                agent_id: task.assignee_id.clone(),
+                data: serde_json::to_value(&task).unwrap_or_default(),
+                timestamp: Utc::now(),
+            });
             webhooks::fire_assignment_webhook(state.storage.clone(), &task);
             Ok(Json(task))
         }
@@ -540,6 +593,7 @@ pub async fn approve_task(
             }
             pending.extend(events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.approved",
                 &task,
@@ -572,6 +626,7 @@ pub async fn request_changes(
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.changes_requested",
                 &task,
@@ -608,6 +663,7 @@ pub async fn submit_review(
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.review_requested",
                 &task,
@@ -639,6 +695,7 @@ pub async fn start_review(
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
+                &state.event_bus,
                 &identity,
                 "task.review_started",
                 &task,

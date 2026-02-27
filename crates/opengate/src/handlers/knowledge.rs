@@ -98,6 +98,7 @@ pub async fn upsert_knowledge(
 
     let pending = events::emit_knowledge_updated(
         &*state.storage,
+        &state.event_bus,
         &identity,
         &project_id,
         &entry.key,

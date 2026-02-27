@@ -3,8 +3,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use chrono::Utc;
 
 use crate::app::AppState;
+use crate::events::Event;
 use crate::handlers::webhooks;
 use opengate_models::*;
 
@@ -48,6 +50,19 @@ pub async fn create_question(
     } else {
         question
     };
+
+    // Emit to broadcast EventBus for real-time WebSocket subscribers
+    state.event_bus.emit(Event {
+        event_type: "task.question_asked".to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::json!({
+            "question_id": question.id,
+            "question": question.question,
+            "task_id": task_id,
+        }),
+        timestamp: Utc::now(),
+    });
 
     // Emit task.question_asked event
     let payload = serde_json::json!({
@@ -212,6 +227,19 @@ pub async fn resolve_question(
             Json(serde_json::json!({"error": "Question is not open"})),
         ))?;
 
+    // Emit to broadcast EventBus for real-time WebSocket subscribers
+    state.event_bus.emit(Event {
+        event_type: "task.question_resolved".to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::json!({
+            "question_id": question.id,
+            "resolution": question.resolution,
+            "task_id": task_id,
+        }),
+        timestamp: Utc::now(),
+    });
+
     // Emit task.question_resolved event
     let payload = serde_json::json!({
         "task_title": task.title,
@@ -337,6 +365,26 @@ pub async fn create_reply(
         identity.author_type(),
         identity.author_id(),
     );
+
+    // Emit to broadcast EventBus for real-time WebSocket subscribers
+    let bus_event_type = if is_resolution {
+        "task.question_resolved"
+    } else {
+        "task.question_replied"
+    };
+    state.event_bus.emit(Event {
+        event_type: bus_event_type.to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::json!({
+            "question_id": question_id,
+            "reply_id": reply.id,
+            "body": reply.body,
+            "is_resolution": is_resolution,
+            "task_id": task_id,
+        }),
+        timestamp: Utc::now(),
+    });
 
     // Emit event
     let event_type = if is_resolution {
@@ -475,6 +523,18 @@ pub async fn dismiss_question(
             Json(serde_json::json!({"error": "Question is not open"})),
         ))?;
 
+    state.event_bus.emit(Event {
+        event_type: "task.question_dismissed".to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::json!({
+            "question_id": question_id,
+            "reason": input.reason,
+            "task_id": task_id,
+        }),
+        timestamp: Utc::now(),
+    });
+
     let payload = serde_json::json!({
         "task_title": task.title,
         "actor_name": identity.display_name(),
@@ -524,6 +584,19 @@ pub async fn assign_question(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "Failed to assign question"})),
         ))?;
+
+    state.event_bus.emit(Event {
+        event_type: "task.question_assigned".to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::json!({
+            "question_id": question_id,
+            "target_type": input.target_type,
+            "target_id": input.target_id,
+            "task_id": task_id,
+        }),
+        timestamp: Utc::now(),
+    });
 
     // emit_event will auto-route notification to target via route_event_notifications
     let payload = serde_json::json!({

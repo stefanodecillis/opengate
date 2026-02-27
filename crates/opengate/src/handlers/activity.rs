@@ -50,6 +50,7 @@ pub async fn create_activity(
 
     let pending = events::emit_task_event(
         &*state.storage,
+        &state.event_bus,
         &identity,
         "task.progress",
         &task,

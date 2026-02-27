@@ -1,8 +1,12 @@
+use chrono::Utc;
+
+use crate::events::{Event, EventBus};
 use crate::storage::StorageBackend;
 use opengate_models::{Identity, PendingNotifWebhook, Task};
 
 pub fn emit_task_event(
     storage: &dyn StorageBackend,
+    event_bus: &EventBus,
     identity: &Identity,
     event_type: &str,
     task: &Task,
@@ -18,6 +22,15 @@ pub fn emit_task_event(
         }
     });
 
+    // Emit to the broadcast EventBus for real-time WebSocket subscribers
+    event_bus.emit(Event {
+        event_type: event_type.to_string(),
+        project_id: Some(task.project_id.clone()),
+        agent_id: task.assignee_id.clone(),
+        data: serde_json::to_value(task).unwrap_or_default(),
+        timestamp: Utc::now(),
+    });
+
     storage.emit_event(
         None,
         event_type,
@@ -31,6 +44,7 @@ pub fn emit_task_event(
 
 pub fn emit_knowledge_updated(
     storage: &dyn StorageBackend,
+    event_bus: &EventBus,
     identity: &Identity,
     project_id: &str,
     key: &str,
@@ -47,6 +61,18 @@ pub fn emit_knowledge_updated(
         "knowledge_key": key,
         "knowledge_title": title,
         "action": action,
+    });
+
+    event_bus.emit(Event {
+        event_type: "knowledge.updated".to_string(),
+        project_id: Some(project_id.to_string()),
+        agent_id: None,
+        data: serde_json::json!({
+            "key": key,
+            "title": title,
+            "action": action,
+        }),
+        timestamp: Utc::now(),
     });
 
     storage.emit_event(
