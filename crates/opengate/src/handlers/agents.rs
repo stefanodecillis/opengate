@@ -94,6 +94,29 @@ pub async fn update_agent(
     }
 }
 
+pub async fn update_agent_self(
+    State(state): State<AppState>,
+    identity: Identity,
+    Json(input): Json<UpdateAgent>,
+) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
+    let agent_id = match &identity {
+        Identity::AgentIdentity { id, .. } => id.clone(),
+        _ => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Only agents can update their own profile"})),
+            ))
+        }
+    };
+    match state.storage.update_agent(None, &agent_id, &input) {
+        Some(agent) => Ok(Json(agent)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Agent not found"})),
+        )),
+    }
+}
+
 pub async fn create_agent(
     State(state): State<AppState>,
     _identity: Identity,

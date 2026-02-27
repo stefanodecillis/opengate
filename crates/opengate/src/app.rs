@@ -185,6 +185,10 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::agents::delete_agent),
         )
         .route("/api/agents/heartbeat", post(handlers::agents::heartbeat))
+        .route(
+            "/api/agents/me",
+            patch(handlers::agents::update_agent_self),
+        )
         .route("/api/agents/me/inbox", get(handlers::agents::inbox))
         .route(
             "/api/agents/me/questions",
