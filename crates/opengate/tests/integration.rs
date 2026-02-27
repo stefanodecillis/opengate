@@ -1,9 +1,11 @@
+use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use opengate::app::{build_router, AppState};
 use opengate::db;
@@ -85,6 +87,10 @@ impl TestServer {
         resp.json::<Value>().await.unwrap()
     }
 
+    fn ws_url(&self) -> String {
+        self.base_url.replacen("http://", "ws://", 1) + "/api/ws"
+    }
+
     async fn create_task(&self, project_id: &str, title: &str) -> Value {
         let resp = self
             .client()
@@ -104,6 +110,57 @@ impl TestServer {
             .unwrap();
         assert_eq!(resp.status(), 201);
         resp.json::<Value>().await.unwrap()
+    }
+}
+
+type WsSink = futures_util::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    WsMessage,
+>;
+type WsStream = futures_util::stream::SplitStream<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+>;
+
+/// Connect to the WS endpoint, authenticate, and return the split (sink, stream) pair.
+/// Panics if auth fails.
+async fn ws_auth(url: &str, api_key: &str) -> (WsSink, WsStream) {
+    let (ws, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("WS connect failed");
+    let (mut sink, mut stream) = ws.split();
+
+    // Send auth
+    let auth_msg = json!({"type": "auth", "token": api_key}).to_string();
+    sink.send(WsMessage::Text(auth_msg.into())).await.unwrap();
+
+    // Read auth_ok
+    let resp = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected auth_ok");
+    assert_eq!(resp["type"], "auth_ok", "auth response: {resp}");
+
+    (sink, stream)
+}
+
+/// Read the next JSON text message from the WS stream, skipping server pings.
+/// Returns None on timeout.
+async fn recv_json(stream: &mut WsStream, timeout_ms: u64) -> Option<Value> {
+    let deadline = std::time::Duration::from_millis(timeout_ms);
+    loop {
+        match tokio::time::timeout(deadline, stream.next()).await {
+            Ok(Some(Ok(WsMessage::Text(ref text)))) => {
+                let v: Value = serde_json::from_str(text.as_ref()).expect("invalid JSON from WS");
+                // Skip server pings
+                if v["type"] == "ping" {
+                    continue;
+                }
+                return Some(v);
+            }
+            Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) => return None,
+            Ok(Some(Ok(_))) => continue, // skip binary/ping/pong frames
+            Ok(Some(Err(e))) => panic!("WS read error: {e}"),
+            Err(_) => return None, // timeout
+        }
     }
 }
 
@@ -3830,5 +3887,331 @@ async fn test_claim_preassigned_task() {
     assert_eq!(
         body["status"], "in_progress",
         "second claim should be idempotent"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket integration tests
+// ---------------------------------------------------------------------------
+
+// WS Auth: valid API key → auth_ok with identity
+#[tokio::test]
+async fn test_ws_auth_valid() {
+    let s = TestServer::start().await;
+    let (ws, _) = tokio_tungstenite::connect_async(&s.ws_url())
+        .await
+        .expect("WS connect failed");
+    let (mut sink, mut stream) = ws.split();
+
+    let auth_msg = json!({"type": "auth", "token": s.api_key}).to_string();
+    sink.send(WsMessage::Text(auth_msg.into())).await.unwrap();
+
+    let resp = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected auth_ok");
+    assert_eq!(resp["type"], "auth_ok");
+    assert_eq!(resp["identity"]["type"], "agent");
+    assert_eq!(resp["identity"]["id"], s.agent_id());
+    assert!(resp["identity"]["name"].is_string());
+}
+
+// WS Auth: invalid API key → auth_failed error
+#[tokio::test]
+async fn test_ws_auth_invalid() {
+    let s = TestServer::start().await;
+    let (ws, _) = tokio_tungstenite::connect_async(&s.ws_url())
+        .await
+        .expect("WS connect failed");
+    let (mut sink, mut stream) = ws.split();
+
+    let auth_msg = json!({"type": "auth", "token": "bad-key-12345"}).to_string();
+    sink.send(WsMessage::Text(auth_msg.into())).await.unwrap();
+
+    let resp = recv_json(&mut stream, 2000).await.expect("expected error");
+    assert_eq!(resp["type"], "error");
+    assert_eq!(resp["code"], "auth_failed");
+}
+
+// WS Auth: subscribe before auth → auth_required error
+#[tokio::test]
+async fn test_ws_auth_required() {
+    let s = TestServer::start().await;
+    let (ws, _) = tokio_tungstenite::connect_async(&s.ws_url())
+        .await
+        .expect("WS connect failed");
+    let (mut sink, mut stream) = ws.split();
+
+    let sub_msg = json!({"type": "subscribe", "events": ["task.*"]}).to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+
+    let resp = recv_json(&mut stream, 2000).await.expect("expected error");
+    assert_eq!(resp["type"], "error");
+    assert_eq!(resp["code"], "auth_required");
+}
+
+// WS Event roundtrip: subscribe task.*, create task via REST, receive event
+#[tokio::test]
+async fn test_ws_event_roundtrip() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Subscribe to task.*
+    let sub_msg = json!({"type": "subscribe", "events": ["task.*"]}).to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected subscribed");
+    assert_eq!(resp["type"], "subscribed");
+    assert_eq!(resp["id"], "sub-1");
+
+    // Create a task via REST → triggers task.created event
+    let project = s.create_project("WS Roundtrip").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "WS Test Task").await;
+    let task_id = task["id"].as_str().unwrap();
+
+    // Should receive the event
+    let event = recv_json(&mut stream, 2000).await.expect("expected event");
+    assert_eq!(event["type"], "event");
+    assert_eq!(event["sub"], "sub-1");
+    assert_eq!(event["event"], "task.created");
+    assert_eq!(event["data"]["id"].as_str().unwrap(), task_id);
+}
+
+// WS Multiple subscribers: two clients both receive the same event
+#[tokio::test]
+async fn test_ws_multiple_subscribers() {
+    let s = TestServer::start().await;
+
+    // Connect two WS clients
+    let (mut sink1, mut stream1) = ws_auth(&s.ws_url(), &s.api_key).await;
+    let (mut sink2, mut stream2) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Both subscribe to task.*
+    let sub_msg = json!({"type": "subscribe", "events": ["task.*"]}).to_string();
+    sink1
+        .send(WsMessage::Text(sub_msg.clone().into()))
+        .await
+        .unwrap();
+    let r1 = recv_json(&mut stream1, 2000).await.unwrap();
+    assert_eq!(r1["type"], "subscribed");
+
+    sink2.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let r2 = recv_json(&mut stream2, 2000).await.unwrap();
+    assert_eq!(r2["type"], "subscribed");
+
+    // Create task via REST
+    let project = s.create_project("WS Multi Sub").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "Multi Sub Task").await;
+    let task_id = task["id"].as_str().unwrap();
+
+    // Both clients should receive the event
+    let ev1 = recv_json(&mut stream1, 2000)
+        .await
+        .expect("client 1 should receive event");
+    assert_eq!(ev1["event"], "task.created");
+    assert_eq!(ev1["data"]["id"].as_str().unwrap(), task_id);
+
+    let ev2 = recv_json(&mut stream2, 2000)
+        .await
+        .expect("client 2 should receive event");
+    assert_eq!(ev2["event"], "task.created");
+    assert_eq!(ev2["data"]["id"].as_str().unwrap(), task_id);
+}
+
+// WS No subscribers: creating a task with no WS clients doesn't panic
+#[tokio::test]
+async fn test_ws_no_subscribers_no_panic() {
+    let s = TestServer::start().await;
+    // No WS clients — just create a task via REST
+    let project = s.create_project("No Subscribers").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "No Subscriber Task").await;
+    assert!(
+        task["id"].is_string(),
+        "REST should succeed with no WS listeners"
+    );
+}
+
+// WS Filter: agent_id "self" only receives events for own agent
+#[tokio::test]
+async fn test_ws_filter_agent_self() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Subscribe with agent_id: "self" filter
+    let sub_msg = json!({
+        "type": "subscribe",
+        "events": ["task.*"],
+        "filter": {"agent_id": "self"}
+    })
+    .to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "subscribed");
+
+    // Create a task (task.created has no assignee → agent_id is None) — should NOT match
+    let project = s.create_project("Agent Filter").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "Agent Filter Task").await;
+    let task_id = task["id"].as_str().unwrap();
+
+    // task.created has agent_id=None, won't match "self" filter
+    let no_event = recv_json(&mut stream, 500).await;
+    assert!(
+        no_event.is_none(),
+        "should not receive task.created with no assignee"
+    );
+
+    // Claim the task → assigns agent, emits task.claimed with agent_id = self
+    s.client()
+        .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .send()
+        .await
+        .unwrap();
+
+    // Should receive the claimed event (agent_id matches self)
+    let event = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected claimed event");
+    assert_eq!(event["event"], "task.claimed");
+    assert_eq!(event["data"]["assignee_id"].as_str().unwrap(), s.agent_id());
+}
+
+// WS Filter: project_id only receives events for that project
+#[tokio::test]
+async fn test_ws_filter_project() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Create two projects
+    let proj_a = s.create_project("Project A").await;
+    let pid_a = proj_a["id"].as_str().unwrap();
+    let proj_b = s.create_project("Project B").await;
+    let pid_b = proj_b["id"].as_str().unwrap();
+
+    // Subscribe with project_id filter for project A only
+    let sub_msg = json!({
+        "type": "subscribe",
+        "events": ["task.*"],
+        "filter": {"project_id": pid_a}
+    })
+    .to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "subscribed");
+
+    // Create task in project B → should NOT receive event
+    s.create_task(pid_b, "Task in B").await;
+    let no_event = recv_json(&mut stream, 500).await;
+    assert!(no_event.is_none(), "should not receive event for project B");
+
+    // Create task in project A → SHOULD receive event
+    let task_a = s.create_task(pid_a, "Task in A").await;
+    let event = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected event for project A");
+    assert_eq!(event["event"], "task.created");
+    assert_eq!(
+        event["data"]["id"].as_str().unwrap(),
+        task_a["id"].as_str().unwrap()
+    );
+}
+
+// WS Wildcard no match: subscribe task.*, trigger knowledge.updated → not received
+#[tokio::test]
+async fn test_ws_wildcard_no_match() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Subscribe to task.* only
+    let sub_msg = json!({"type": "subscribe", "events": ["task.*"]}).to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "subscribed");
+
+    // Trigger a knowledge.updated event via REST
+    let project = s.create_project("Wildcard NoMatch").await;
+    let pid = project["id"].as_str().unwrap();
+    s.client()
+        .put(format!(
+            "{}/api/projects/{}/knowledge/test-key",
+            s.base_url, pid
+        ))
+        .header("Authorization", s.auth_header())
+        .json(&json!({"title": "Test Knowledge", "body": "Some content"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Should NOT receive the knowledge event on a task.* subscription
+    let no_event = recv_json(&mut stream, 500).await;
+    assert!(
+        no_event.is_none(),
+        "task.* should not match knowledge.updated"
+    );
+}
+
+// WS Exact match: subscribe task.created, receive only task.created
+#[tokio::test]
+async fn test_ws_exact_match() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Subscribe to exact pattern task.created
+    let sub_msg = json!({"type": "subscribe", "events": ["task.created"]}).to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "subscribed");
+
+    // Create task → should receive task.created
+    let project = s.create_project("Exact Match").await;
+    let pid = project["id"].as_str().unwrap();
+    let task = s.create_task(pid, "Exact Match Task").await;
+    let task_id = task["id"].as_str().unwrap();
+
+    let event = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected task.created");
+    assert_eq!(event["event"], "task.created");
+    assert_eq!(event["data"]["id"].as_str().unwrap(), task_id);
+}
+
+// WS Unsubscribe: receive event, unsubscribe, no longer receive
+#[tokio::test]
+async fn test_ws_unsubscribe() {
+    let s = TestServer::start().await;
+    let (mut sink, mut stream) = ws_auth(&s.ws_url(), &s.api_key).await;
+
+    // Subscribe
+    let sub_msg = json!({"type": "subscribe", "events": ["task.*"]}).to_string();
+    sink.send(WsMessage::Text(sub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "subscribed");
+    let sub_id = resp["id"].as_str().unwrap().to_string();
+
+    // Create task → should receive event
+    let project = s.create_project("Unsubscribe Test").await;
+    let pid = project["id"].as_str().unwrap();
+    s.create_task(pid, "Before Unsub").await;
+    let event = recv_json(&mut stream, 2000)
+        .await
+        .expect("expected event before unsub");
+    assert_eq!(event["event"], "task.created");
+
+    // Unsubscribe
+    let unsub_msg = json!({"type": "unsubscribe", "id": sub_id}).to_string();
+    sink.send(WsMessage::Text(unsub_msg.into())).await.unwrap();
+    let resp = recv_json(&mut stream, 2000).await.unwrap();
+    assert_eq!(resp["type"], "unsubscribed");
+
+    // Create another task → should NOT receive event
+    s.create_task(pid, "After Unsub").await;
+    let no_event = recv_json(&mut stream, 500).await;
+    assert!(
+        no_event.is_none(),
+        "should not receive events after unsubscribe"
     );
 }
