@@ -636,8 +636,8 @@ impl WebhookStore for SqliteBackend {
 }
 
 impl StatsStore for SqliteBackend {
-    fn get_stats(&self, _tenant: Option<&str>) -> DashboardStats {
-        db_ops::get_stats(&self.lock())
+    fn get_stats(&self, tenant: Option<&str>) -> DashboardStats {
+        db_ops::get_stats(&self.lock(), tenant)
     }
 }
 
