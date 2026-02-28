@@ -2000,48 +2000,87 @@ pub fn update_notification_webhook_status(conn: &Connection, notification_id: i6
 
 // --- Stats ---
 
-pub fn get_stats(conn: &Connection) -> DashboardStats {
+pub fn get_stats(conn: &Connection, tenant: Option<&str>) -> DashboardStats {
     let mut tasks_by_status = HashMap::new();
-    let mut stmt = conn
-        .prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")
-        .unwrap();
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })
-        .unwrap();
-    for row in rows.flatten() {
-        tasks_by_status.insert(row.0, row.1);
+
+    if let Some(t) = tenant {
+        let mut stmt = conn
+            .prepare("SELECT status, COUNT(*) FROM tasks WHERE owner_id = ?1 GROUP BY status")
+            .unwrap();
+        let rows = stmt
+            .query_map(params![t], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap();
+        for row in rows.flatten() {
+            tasks_by_status.insert(row.0, row.1);
+        }
+    } else {
+        let mut stmt = conn
+            .prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap();
+        for row in rows.flatten() {
+            tasks_by_status.insert(row.0, row.1);
+        }
     }
 
-    let total_tasks: i64 = conn
-        .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
-        .unwrap_or(0);
+    let total_tasks: i64 = if let Some(t) = tenant {
+        conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE owner_id = ?1",
+            params![t],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    } else {
+        conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
+            .unwrap_or(0)
+    };
 
     let cutoff = (Utc::now() - chrono::Duration::minutes(30)).to_rfc3339();
-    let active_agents: i64 = conn
-        .query_row(
+    let active_agents: i64 = if let Some(t) = tenant {
+        conn.query_row(
+            "SELECT COUNT(*) FROM agents WHERE last_seen_at > ?1 AND owner_id = ?2",
+            params![cutoff, t],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    } else {
+        conn.query_row(
             "SELECT COUNT(*) FROM agents WHERE last_seen_at > ?1",
             params![cutoff],
             |row| row.get(0),
         )
-        .unwrap_or(0);
+        .unwrap_or(0)
+    };
 
-    let total_projects: i64 = conn
-        .query_row(
+    let total_projects: i64 = if let Some(t) = tenant {
+        conn.query_row(
+            "SELECT COUNT(*) FROM projects WHERE status = 'active' AND owner_id = ?1",
+            params![t],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    } else {
+        conn.query_row(
             "SELECT COUNT(*) FROM projects WHERE status = 'active'",
             [],
             |row| row.get(0),
         )
-        .unwrap_or(0);
+        .unwrap_or(0)
+    };
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, task_id, author_type, author_id, content, activity_type, metadata, created_at FROM task_activity ORDER BY created_at DESC LIMIT 20",
-        )
-        .unwrap();
-    let recent_activity: Vec<TaskActivity> = stmt
-        .query_map([], |row| {
+    let recent_activity: Vec<TaskActivity> = if let Some(t) = tenant {
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.task_id, a.author_type, a.author_id, a.content, a.activity_type, a.metadata, a.created_at                  FROM task_activity a                  INNER JOIN tasks tk ON tk.id = a.task_id                  WHERE tk.owner_id = ?1                  ORDER BY a.created_at DESC LIMIT 20",
+            )
+            .unwrap();
+        stmt.query_map(params![t], |row| {
             let metadata_str: Option<String> = row.get(6)?;
             let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
             Ok(TaskActivity {
@@ -2057,7 +2096,31 @@ pub fn get_stats(conn: &Connection) -> DashboardStats {
         })
         .unwrap()
         .filter_map(|r| r.ok())
-        .collect();
+        .collect()
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, task_id, author_type, author_id, content, activity_type, metadata, created_at                  FROM task_activity ORDER BY created_at DESC LIMIT 20",
+            )
+            .unwrap();
+        stmt.query_map([], |row| {
+            let metadata_str: Option<String> = row.get(6)?;
+            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+            Ok(TaskActivity {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                author_type: row.get(2)?,
+                author_id: row.get(3)?,
+                content: row.get(4)?,
+                activity_type: row.get(5)?,
+                metadata,
+                created_at: row.get(7)?,
+            })
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+    };
 
     DashboardStats {
         tasks_by_status,
