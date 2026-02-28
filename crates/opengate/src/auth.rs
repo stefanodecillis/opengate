@@ -35,6 +35,7 @@ impl FromRequestParts<AppState> for Identity {
                 return Ok(Identity::AgentIdentity {
                     id: agent.id,
                     name: agent.name,
+                    tenant_id: agent.owner_id,
                 });
             }
         }

@@ -448,7 +448,7 @@ fn handle_tools_call(ctx: &McpContext, params: &Value) -> Result<Value, Value> {
 
 fn call_list_projects(ctx: &McpContext, args: &Value) -> Result<Value, String> {
     let status = args.get("status").and_then(|v| v.as_str());
-    let projects = db_ops::list_projects(&ctx.conn, status);
+    let projects = db_ops::list_projects(&ctx.conn, None, status);
     Ok(serde_json::to_value(&projects).unwrap())
 }
 
@@ -485,7 +485,7 @@ fn call_create_project(ctx: &McpContext, args: &Value) -> Result<Value, String> 
         repo_url,
         default_branch,
     };
-    let project = db_ops::create_project(&ctx.conn, &input, &ctx.agent_id);
+    let project = db_ops::create_project(&ctx.conn, None, &input, &ctx.agent_id);
     Ok(serde_json::to_value(&project).unwrap())
 }
 
@@ -512,7 +512,7 @@ fn call_list_tasks(ctx: &McpContext, args: &Value) -> Result<Value, String> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     };
-    let tasks = db_ops::list_tasks(&ctx.conn, &filters);
+    let tasks = db_ops::list_tasks(&ctx.conn, None, &filters);
     Ok(serde_json::to_value(&tasks).unwrap())
 }
 
@@ -535,7 +535,7 @@ fn call_create_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'title'")?;
 
-    if db_ops::get_project(&ctx.conn, project_id).is_none() {
+    if db_ops::get_project(&ctx.conn, None, project_id).is_none() {
         return Err("Project not found".to_string());
     }
 
@@ -571,7 +571,7 @@ fn call_create_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         recurrence_rule: args.get("recurrence_rule").cloned(),
     };
 
-    let task = db_ops::create_task(&ctx.conn, project_id, &input, &ctx.agent_id);
+    let task = db_ops::create_task(&ctx.conn, None, project_id, &input, &ctx.agent_id);
 
     db_ops::create_activity(
         &ctx.conn,
@@ -667,7 +667,7 @@ fn call_complete_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
 
-    let task = db_ops::get_task(&ctx.conn, id).ok_or("Task not found")?;
+    let task = db_ops::get_task(&ctx.conn, None, id).ok_or("Task not found")?;
     let current_status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
 
     if current_status != TaskStatus::InProgress && current_status != TaskStatus::Review {
@@ -826,7 +826,7 @@ fn call_post_comment(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'content'")?;
 
-    if db_ops::get_task(&ctx.conn, task_id).is_none() {
+    if db_ops::get_task(&ctx.conn, None, task_id).is_none() {
         return Err("Task not found".to_string());
     }
 
@@ -1016,7 +1016,7 @@ fn call_set_knowledge(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'content'")?;
 
-    if db_ops::get_project(&ctx.conn, project_id).is_none() {
+    if db_ops::get_project(&ctx.conn, None, project_id).is_none() {
         return Err("Project not found".to_string());
     }
 
