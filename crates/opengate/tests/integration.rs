@@ -4269,16 +4269,34 @@ fn test_tenant_isolation_projects() {
     // Tenant A sees only its project + unowned
     let tenant_a_projects = db_ops::list_projects(&conn, Some("tenant_a"), None);
     let names: Vec<&str> = tenant_a_projects.iter().map(|p| p.name.as_str()).collect();
-    assert!(names.contains(&"Tenant A Project"), "tenant_a should see its own project");
-    assert!(names.contains(&"No Owner Project"), "tenant_a should see unowned project");
-    assert!(!names.contains(&"Tenant B Project"), "tenant_a must NOT see tenant_b project");
+    assert!(
+        names.contains(&"Tenant A Project"),
+        "tenant_a should see its own project"
+    );
+    assert!(
+        names.contains(&"No Owner Project"),
+        "tenant_a should see unowned project"
+    );
+    assert!(
+        !names.contains(&"Tenant B Project"),
+        "tenant_a must NOT see tenant_b project"
+    );
 
     // Tenant B sees only its project + unowned
     let tenant_b_projects = db_ops::list_projects(&conn, Some("tenant_b"), None);
     let names: Vec<&str> = tenant_b_projects.iter().map(|p| p.name.as_str()).collect();
-    assert!(names.contains(&"Tenant B Project"), "tenant_b should see its own project");
-    assert!(names.contains(&"No Owner Project"), "tenant_b should see unowned project");
-    assert!(!names.contains(&"Tenant A Project"), "tenant_b must NOT see tenant_a project");
+    assert!(
+        names.contains(&"Tenant B Project"),
+        "tenant_b should see its own project"
+    );
+    assert!(
+        names.contains(&"No Owner Project"),
+        "tenant_b should see unowned project"
+    );
+    assert!(
+        !names.contains(&"Tenant A Project"),
+        "tenant_b must NOT see tenant_a project"
+    );
 
     // No tenant (OSS mode) sees all projects
     let all = db_ops::list_projects(&conn, None, None);
@@ -4293,35 +4311,91 @@ fn test_tenant_isolation_tasks() {
 
     let conn = db::init_db(":memory:");
 
-    let proj_a = db_ops::create_project(&conn, Some("tenant_a"), &CreateProject {
-        name: "Project A".to_string(), description: None, repo_url: None, default_branch: None,
-    }, "sys");
-    let proj_b = db_ops::create_project(&conn, Some("tenant_b"), &CreateProject {
-        name: "Project B".to_string(), description: None, repo_url: None, default_branch: None,
-    }, "sys");
+    let proj_a = db_ops::create_project(
+        &conn,
+        Some("tenant_a"),
+        &CreateProject {
+            name: "Project A".to_string(),
+            description: None,
+            repo_url: None,
+            default_branch: None,
+        },
+        "sys",
+    );
+    let proj_b = db_ops::create_project(
+        &conn,
+        Some("tenant_b"),
+        &CreateProject {
+            name: "Project B".to_string(),
+            description: None,
+            repo_url: None,
+            default_branch: None,
+        },
+        "sys",
+    );
 
-    db_ops::create_task(&conn, Some("tenant_a"), &proj_a.id, &CreateTask {
-        title: "Task A".to_string(), description: None, priority: None,
-        tags: None, context: None, output: None, due_date: None,
-        assignee_type: None, assignee_id: None, scheduled_at: None, recurrence_rule: None,
-    }, "sys");
-    db_ops::create_task(&conn, Some("tenant_b"), &proj_b.id, &CreateTask {
-        title: "Task B".to_string(), description: None, priority: None,
-        tags: None, context: None, output: None, due_date: None,
-        assignee_type: None, assignee_id: None, scheduled_at: None, recurrence_rule: None,
-    }, "sys");
+    db_ops::create_task(
+        &conn,
+        Some("tenant_a"),
+        &proj_a.id,
+        &CreateTask {
+            title: "Task A".to_string(),
+            description: None,
+            priority: None,
+            tags: None,
+            context: None,
+            output: None,
+            due_date: None,
+            assignee_type: None,
+            assignee_id: None,
+            scheduled_at: None,
+            recurrence_rule: None,
+        },
+        "sys",
+    );
+    db_ops::create_task(
+        &conn,
+        Some("tenant_b"),
+        &proj_b.id,
+        &CreateTask {
+            title: "Task B".to_string(),
+            description: None,
+            priority: None,
+            tags: None,
+            context: None,
+            output: None,
+            due_date: None,
+            assignee_type: None,
+            assignee_id: None,
+            scheduled_at: None,
+            recurrence_rule: None,
+        },
+        "sys",
+    );
 
-    let filters = TaskFilters { project_id: None, status: None, priority: None, assignee_id: None, tag: None };
+    let filters = TaskFilters {
+        project_id: None,
+        status: None,
+        priority: None,
+        assignee_id: None,
+        tag: None,
+    };
 
     let tasks_a = db_ops::list_tasks(&conn, Some("tenant_a"), &filters);
     let titles_a: Vec<&str> = tasks_a.iter().map(|t| t.title.as_str()).collect();
     assert!(titles_a.contains(&"Task A"), "tenant_a should see Task A");
-    assert!(!titles_a.contains(&"Task B"), "tenant_a must NOT see Task B");
+    assert!(
+        !titles_a.contains(&"Task B"),
+        "tenant_a must NOT see Task B"
+    );
 
     let tasks_b = db_ops::list_tasks(&conn, Some("tenant_b"), &filters);
     let titles_b: Vec<&str> = tasks_b.iter().map(|t| t.title.as_str()).collect();
     assert!(titles_b.contains(&"Task B"), "tenant_b should see Task B");
-    assert!(!titles_b.contains(&"Task A"), "tenant_b must NOT see Task A");
+    assert!(
+        !titles_b.contains(&"Task A"),
+        "tenant_b must NOT see Task A"
+    );
 
     // OSS mode — sees all
     let all = db_ops::list_tasks(&conn, None, &filters);

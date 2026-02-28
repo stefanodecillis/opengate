@@ -450,7 +450,12 @@ pub fn append_status_history(
 
 // --- Projects ---
 
-pub fn create_project(conn: &Connection, tenant: Option<&str>, input: &CreateProject, created_by: &str) -> Project {
+pub fn create_project(
+    conn: &Connection,
+    tenant: Option<&str>,
+    input: &CreateProject,
+    created_by: &str,
+) -> Project {
     let id = Uuid::new_v4().to_string();
     let now = now();
     conn.execute(
@@ -463,7 +468,11 @@ pub fn create_project(conn: &Connection, tenant: Option<&str>, input: &CreatePro
 }
 
 /// Internal: look up project by id with optional tenant filtering.
-fn get_project_inner(conn: &Connection, id: impl AsRef<str>, tenant: Option<&str>) -> Option<Project> {
+fn get_project_inner(
+    conn: &Connection,
+    id: impl AsRef<str>,
+    tenant: Option<&str>,
+) -> Option<Project> {
     let id = id.as_ref();
     let row_mapper = |row: &rusqlite::Row<'_>| {
         Ok(Project {
@@ -496,7 +505,11 @@ pub fn get_project(conn: &Connection, tenant: Option<&str>, id: &str) -> Option<
     get_project_inner(conn, id, tenant)
 }
 
-pub fn list_projects(conn: &Connection, tenant: Option<&str>, status_filter: Option<&str>) -> Vec<Project> {
+pub fn list_projects(
+    conn: &Connection,
+    tenant: Option<&str>,
+    status_filter: Option<&str>,
+) -> Vec<Project> {
     let mut conditions = vec!["1=1".to_string()];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
     let mut idx = 1usize;
@@ -579,7 +592,9 @@ pub fn create_task(
             "SELECT owner_id FROM projects WHERE id = ?1",
             params![project_id],
             |row| row.get::<_, Option<String>>(0),
-        ).ok().flatten()
+        )
+        .ok()
+        .flatten()
     });
 
     let id = Uuid::new_v4().to_string();
@@ -635,7 +650,10 @@ pub fn create_task(
 
 pub fn get_task(conn: &Connection, tenant: Option<&str>, id: &str) -> Option<Task> {
     let task = if let Some(t) = tenant {
-        let sql = format!("SELECT {} FROM tasks t WHERE t.id = ?1 AND (t.owner_id IS NULL OR t.owner_id = ?2)", TASK_COLS_T);
+        let sql = format!(
+            "SELECT {} FROM tasks t WHERE t.id = ?1 AND (t.owner_id IS NULL OR t.owner_id = ?2)",
+            TASK_COLS_T
+        );
         conn.query_row(&sql, params![id, t], row_to_task).ok()?
     } else {
         let sql = format!("SELECT {} FROM tasks WHERE id = ?1", TASK_COLS);
@@ -964,7 +982,10 @@ pub fn remove_dependency(conn: &Connection, task_id: &str, depends_on_id: &str) 
 /// Get tasks that task_id depends on (upstream deps).
 pub fn get_task_dependencies(conn: &Connection, task_id: &str) -> Vec<Task> {
     let dep_ids = load_dependencies(conn, task_id);
-    dep_ids.iter().filter_map(|id| get_task(conn, None, id)).collect()
+    dep_ids
+        .iter()
+        .filter_map(|id| get_task(conn, None, id))
+        .collect()
 }
 
 /// Get tasks that depend on task_id (downstream dependents).
@@ -976,7 +997,9 @@ pub fn get_task_dependents(conn: &Connection, task_id: &str) -> Vec<Task> {
         .unwrap()
         .filter_map(|r| r.ok())
         .collect();
-    ids.iter().filter_map(|id| get_task(conn, None, id)).collect()
+    ids.iter()
+        .filter_map(|id| get_task(conn, None, id))
+        .collect()
 }
 
 /// After a task completes, check all its dependents. If all their deps are done,
