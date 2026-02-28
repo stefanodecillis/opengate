@@ -3864,6 +3864,70 @@ pub fn get_webhook_trigger_for_validation(
     .ok()
 }
 
+pub fn update_webhook_trigger(
+    conn: &Connection,
+    trigger_id: &str,
+    input: &opengate_models::UpdateTriggerRequest,
+) -> Option<opengate_models::WebhookTrigger> {
+    let mut sets: Vec<String> = Vec::new();
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref name) = input.name {
+        sets.push("name = ?".to_string());
+        values.push(Box::new(name.clone()));
+    }
+    if let Some(ref action_type) = input.action_type {
+        sets.push("action_type = ?".to_string());
+        values.push(Box::new(action_type.clone()));
+    }
+    if let Some(ref action_config) = input.action_config {
+        sets.push("action_config = ?".to_string());
+        values.push(Box::new(action_config.to_string()));
+    }
+    if let Some(enabled) = input.enabled {
+        sets.push("enabled = ?".to_string());
+        values.push(Box::new(enabled as i64));
+    }
+
+    let now_str = now();
+    sets.push("updated_at = ?".to_string());
+    values.push(Box::new(now_str));
+    values.push(Box::new(trigger_id.to_string()));
+
+    let sql = format!(
+        "UPDATE webhook_triggers SET {} WHERE id = ?",
+        sets.join(", ")
+    );
+    let params: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|v| v.as_ref()).collect();
+    let changed = conn.execute(&sql, params.as_slice()).unwrap_or(0);
+    if changed == 0 {
+        return None;
+    }
+
+    // Re-read the updated trigger
+    conn.query_row(
+        "SELECT id, project_id, name, action_type, action_config, enabled, created_at, updated_at
+         FROM webhook_triggers WHERE id = ?1",
+        rusqlite::params![trigger_id],
+        |row| {
+            let config_str: String = row.get(4)?;
+            let config: serde_json::Value =
+                serde_json::from_str(&config_str).unwrap_or(serde_json::Value::Null);
+            Ok(opengate_models::WebhookTrigger {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                action_type: row.get(3)?,
+                action_config: config,
+                enabled: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        },
+    )
+    .ok()
+}
+
 pub fn delete_webhook_trigger(conn: &Connection, trigger_id: &str) -> bool {
     conn.execute(
         "DELETE FROM webhook_triggers WHERE id = ?1",

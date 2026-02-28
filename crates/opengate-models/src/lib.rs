@@ -876,6 +876,14 @@ pub struct CreateTriggerRequest {
     pub action_config: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateTriggerRequest {
+    pub name: Option<String>,
+    pub action_type: Option<String>,
+    pub action_config: Option<serde_json::Value>,
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WebhookTriggerLog {
     pub id: String,

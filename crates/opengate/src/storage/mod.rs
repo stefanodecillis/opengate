@@ -378,6 +378,12 @@ pub trait WebhookStore: Send + Sync {
         tenant: Option<&str>,
         trigger_id: &str,
     ) -> Option<(WebhookTrigger, String)>;
+    fn update_webhook_trigger(
+        &self,
+        tenant: Option<&str>,
+        trigger_id: &str,
+        input: &UpdateTriggerRequest,
+    ) -> Option<WebhookTrigger>;
     fn delete_webhook_trigger(&self, tenant: Option<&str>, trigger_id: &str) -> bool;
     fn log_trigger_execution(
         &self,

@@ -227,7 +227,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/projects/:id/triggers/:tid",
-            delete(handlers::triggers::delete_trigger),
+            delete(handlers::triggers::delete_trigger).patch(handlers::triggers::update_trigger),
         )
         .route(
             "/api/projects/:id/triggers/:tid/logs",

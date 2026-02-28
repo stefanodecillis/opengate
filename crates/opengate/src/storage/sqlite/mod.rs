@@ -595,6 +595,14 @@ impl WebhookStore for SqliteBackend {
     ) -> Option<(WebhookTrigger, String)> {
         db_ops::get_webhook_trigger_for_validation(&self.lock(), trigger_id)
     }
+    fn update_webhook_trigger(
+        &self,
+        _tenant: Option<&str>,
+        trigger_id: &str,
+        input: &UpdateTriggerRequest,
+    ) -> Option<WebhookTrigger> {
+        db_ops::update_webhook_trigger(&self.lock(), trigger_id, input)
+    }
     fn delete_webhook_trigger(&self, _tenant: Option<&str>, trigger_id: &str) -> bool {
         db_ops::delete_webhook_trigger(&self.lock(), trigger_id)
     }

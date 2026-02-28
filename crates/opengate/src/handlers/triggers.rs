@@ -86,6 +86,34 @@ pub async fn delete_trigger(
     }
 }
 
+/// PATCH /api/projects/:id/triggers/:tid
+pub async fn update_trigger(
+    State(state): State<AppState>,
+    identity: Identity,
+    Path((project_id, trigger_id)): Path<(String, String)>,
+    Json(body): Json<UpdateTriggerRequest>,
+) -> Result<Json<WebhookTrigger>, StatusCode> {
+    if let Some(ref at) = body.action_type {
+        if at != "create_task" {
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    state
+        .storage
+        .update_webhook_trigger(identity.tenant_id(), &trigger_id, &body)
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
 /// GET /api/projects/:id/triggers/:tid/logs
 pub async fn list_trigger_logs(
     State(state): State<AppState>,
