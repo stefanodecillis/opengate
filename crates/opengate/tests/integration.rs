@@ -2466,7 +2466,7 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
     );
 
     // Claim the task (backlog → in_progress)
-    db_ops::claim_task(&conn, &task.id, &agent.id, &agent.name).unwrap();
+    db_ops::claim_task(&conn, None, &task.id, &agent.id, &agent.name).unwrap();
 
     // Create a blocking open question on this task
     db_ops::create_question(
