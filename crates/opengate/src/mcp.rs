@@ -10,6 +10,7 @@ struct McpContext {
     conn: Connection,
     agent_id: String,
     agent_name: String,
+    tenant_id: Option<String>,
 }
 
 pub async fn run_mcp_server(db_path: &str, agent_key: &str) {
@@ -30,6 +31,7 @@ pub async fn run_mcp_server(db_path: &str, agent_key: &str) {
         conn,
         agent_id: agent.id,
         agent_name: agent.name,
+        tenant_id: agent.owner_id,
     };
 
     let stdin = io::stdin();
@@ -448,7 +450,7 @@ fn handle_tools_call(ctx: &McpContext, params: &Value) -> Result<Value, Value> {
 
 fn call_list_projects(ctx: &McpContext, args: &Value) -> Result<Value, String> {
     let status = args.get("status").and_then(|v| v.as_str());
-    let projects = db_ops::list_projects(&ctx.conn, None, status);
+    let projects = db_ops::list_projects(&ctx.conn, ctx.tenant_id.as_deref(), status);
     Ok(serde_json::to_value(&projects).unwrap())
 }
 
@@ -457,7 +459,7 @@ fn call_get_project(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let project = db_ops::get_project_with_stats(&ctx.conn, id)
+    let project = db_ops::get_project_with_stats(&ctx.conn, ctx.tenant_id.as_deref(), id)
         .ok_or_else(|| "Project not found".to_string())?;
     Ok(serde_json::to_value(&project).unwrap())
 }
@@ -485,7 +487,8 @@ fn call_create_project(ctx: &McpContext, args: &Value) -> Result<Value, String> 
         repo_url,
         default_branch,
     };
-    let project = db_ops::create_project(&ctx.conn, None, &input, &ctx.agent_id);
+    let project =
+        db_ops::create_project(&ctx.conn, ctx.tenant_id.as_deref(), &input, &ctx.agent_id);
     Ok(serde_json::to_value(&project).unwrap())
 }
 
@@ -512,7 +515,7 @@ fn call_list_tasks(ctx: &McpContext, args: &Value) -> Result<Value, String> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     };
-    let tasks = db_ops::list_tasks(&ctx.conn, None, &filters);
+    let tasks = db_ops::list_tasks(&ctx.conn, ctx.tenant_id.as_deref(), &filters);
     Ok(serde_json::to_value(&tasks).unwrap())
 }
 
@@ -521,7 +524,8 @@ fn call_get_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let task = db_ops::get_task_full(&ctx.conn, id).ok_or_else(|| "Task not found".to_string())?;
+    let task = db_ops::get_task_full(&ctx.conn, ctx.tenant_id.as_deref(), id)
+        .ok_or_else(|| "Task not found".to_string())?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -535,7 +539,7 @@ fn call_create_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'title'")?;
 
-    if db_ops::get_project(&ctx.conn, None, project_id).is_none() {
+    if db_ops::get_project(&ctx.conn, ctx.tenant_id.as_deref(), project_id).is_none() {
         return Err("Project not found".to_string());
     }
 
@@ -571,7 +575,13 @@ fn call_create_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         recurrence_rule: args.get("recurrence_rule").cloned(),
     };
 
-    let task = db_ops::create_task(&ctx.conn, None, project_id, &input, &ctx.agent_id);
+    let task = db_ops::create_task(
+        &ctx.conn,
+        ctx.tenant_id.as_deref(),
+        project_id,
+        &input,
+        &ctx.agent_id,
+    );
 
     db_ops::create_activity(
         &ctx.conn,
@@ -635,7 +645,7 @@ fn call_update_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         recurrence_rule: args.get("recurrence_rule").cloned(),
     };
 
-    match db_ops::update_task(&ctx.conn, id, &input) {
+    match db_ops::update_task(&ctx.conn, ctx.tenant_id.as_deref(), id, &input) {
         Ok(Some(task)) => Ok(serde_json::to_value(&task).unwrap()),
         Ok(None) => Err("Task not found".to_string()),
         Err(e) => Err(e),
@@ -647,7 +657,13 @@ fn call_claim_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let mut task = db_ops::claim_task(&ctx.conn, id, &ctx.agent_id, &ctx.agent_name)?;
+    let mut task = db_ops::claim_task(
+        &ctx.conn,
+        ctx.tenant_id.as_deref(),
+        id,
+        &ctx.agent_id,
+        &ctx.agent_name,
+    )?;
     task.activities = db_ops::list_activity(&ctx.conn, &task.id);
     Ok(serde_json::to_value(&task).unwrap())
 }
@@ -657,7 +673,7 @@ fn call_release_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
-    let task = db_ops::release_task(&ctx.conn, id, &ctx.agent_id)?;
+    let task = db_ops::release_task(&ctx.conn, ctx.tenant_id.as_deref(), id, &ctx.agent_id)?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -667,7 +683,7 @@ fn call_complete_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'id'")?;
 
-    let task = db_ops::get_task(&ctx.conn, None, id).ok_or("Task not found")?;
+    let task = db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), id).ok_or("Task not found")?;
     let current_status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
 
     if current_status != TaskStatus::InProgress && current_status != TaskStatus::Review {
@@ -691,7 +707,7 @@ fn call_complete_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         recurrence_rule: None,
     };
 
-    match db_ops::update_task(&ctx.conn, id, &input) {
+    match db_ops::update_task(&ctx.conn, ctx.tenant_id.as_deref(), id, &input) {
         Ok(Some(task)) => {
             let summary = args
                 .get("summary")
@@ -709,7 +725,7 @@ fn call_complete_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
                 },
             );
             // v2: inject output into downstream dependent tasks
-            db_ops::inject_upstream_outputs(&ctx.conn, &task);
+            db_ops::inject_upstream_outputs(&ctx.conn, ctx.tenant_id.as_deref(), &task);
             Ok(serde_json::to_value(&task).unwrap())
         }
         Ok(None) => Err("Task not found".to_string()),
@@ -740,7 +756,7 @@ fn call_block_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         recurrence_rule: None,
     };
 
-    match db_ops::update_task(&ctx.conn, id, &input) {
+    match db_ops::update_task(&ctx.conn, ctx.tenant_id.as_deref(), id, &input) {
         Ok(Some(task)) => {
             let reason = args
                 .get("reason")
@@ -775,7 +791,7 @@ fn call_next_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         })
         .unwrap_or_default();
 
-    match db_ops::get_next_task(&ctx.conn, &skills) {
+    match db_ops::get_next_task(&ctx.conn, ctx.tenant_id.as_deref(), &skills) {
         Some(mut task) => {
             task.activities = db_ops::list_activity(&ctx.conn, &task.id);
             Ok(serde_json::to_value(&task).unwrap())
@@ -785,7 +801,7 @@ fn call_next_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
 }
 
 fn call_my_tasks(ctx: &McpContext) -> Result<Value, String> {
-    let tasks = db_ops::get_tasks_for_assignee(&ctx.conn, &ctx.agent_id);
+    let tasks = db_ops::get_tasks_for_assignee(&ctx.conn, ctx.tenant_id.as_deref(), &ctx.agent_id);
     Ok(serde_json::to_value(&tasks).unwrap())
 }
 
@@ -796,7 +812,7 @@ fn call_update_context(ctx: &McpContext, args: &Value) -> Result<Value, String> 
         .ok_or("Missing 'id'")?;
     let patch = args.get("context_patch").ok_or("Missing 'context_patch'")?;
 
-    match db_ops::merge_context(&ctx.conn, id, patch) {
+    match db_ops::merge_context(&ctx.conn, ctx.tenant_id.as_deref(), id, patch) {
         Ok(Some(task)) => {
             db_ops::create_activity(
                 &ctx.conn,
@@ -826,7 +842,7 @@ fn call_post_comment(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'content'")?;
 
-    if db_ops::get_task(&ctx.conn, None, task_id).is_none() {
+    if db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id).is_none() {
         return Err("Task not found".to_string());
     }
 
@@ -850,7 +866,7 @@ fn call_heartbeat(ctx: &McpContext) -> Result<Value, String> {
 }
 
 fn call_list_agents(ctx: &McpContext) -> Result<Value, String> {
-    let agents = db_ops::list_agents(&ctx.conn);
+    let agents = db_ops::list_agents(&ctx.conn, ctx.tenant_id.as_deref());
     Ok(serde_json::to_value(&agents).unwrap())
 }
 
@@ -942,7 +958,7 @@ fn call_assign_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .get("agent_id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'agent_id'")?;
-    let task = db_ops::assign_task(&ctx.conn, task_id, agent_id)?;
+    let task = db_ops::assign_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id, agent_id)?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -956,7 +972,14 @@ fn call_handoff_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'to_agent_id'")?;
     let summary = args.get("summary").and_then(|v| v.as_str());
-    let task = db_ops::handoff_task(&ctx.conn, task_id, &ctx.agent_id, to_agent_id, summary)?;
+    let task = db_ops::handoff_task(
+        &ctx.conn,
+        ctx.tenant_id.as_deref(),
+        task_id,
+        &ctx.agent_id,
+        to_agent_id,
+        summary,
+    )?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -966,8 +989,14 @@ fn call_approve_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'task_id'")?;
     let comment = args.get("comment").and_then(|v| v.as_str());
-    let task = db_ops::approve_task(&ctx.conn, task_id, &ctx.agent_id, comment)?;
-    db_ops::inject_upstream_outputs(&ctx.conn, &task);
+    let task = db_ops::approve_task(
+        &ctx.conn,
+        ctx.tenant_id.as_deref(),
+        task_id,
+        &ctx.agent_id,
+        comment,
+    )?;
+    db_ops::inject_upstream_outputs(&ctx.conn, ctx.tenant_id.as_deref(), &task);
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -980,7 +1009,13 @@ fn call_request_changes(ctx: &McpContext, args: &Value) -> Result<Value, String>
         .get("comment")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'comment'")?;
-    let task = db_ops::request_changes(&ctx.conn, task_id, &ctx.agent_id, comment)?;
+    let task = db_ops::request_changes(
+        &ctx.conn,
+        ctx.tenant_id.as_deref(),
+        task_id,
+        &ctx.agent_id,
+        comment,
+    )?;
     Ok(serde_json::to_value(&task).unwrap())
 }
 
@@ -1016,7 +1051,7 @@ fn call_set_knowledge(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'content'")?;
 
-    if db_ops::get_project(&ctx.conn, None, project_id).is_none() {
+    if db_ops::get_project(&ctx.conn, ctx.tenant_id.as_deref(), project_id).is_none() {
         return Err("Project not found".to_string());
     }
 
@@ -1069,7 +1104,7 @@ fn call_list_knowledge(ctx: &McpContext, args: &Value) -> Result<Value, String> 
 }
 
 fn call_check_inbox(ctx: &McpContext) -> Result<Value, String> {
-    let inbox = db_ops::get_agent_inbox(&ctx.conn, &ctx.agent_id);
+    let inbox = db_ops::get_agent_inbox(&ctx.conn, ctx.tenant_id.as_deref(), &ctx.agent_id);
     Ok(serde_json::to_value(&inbox).unwrap())
 }
 

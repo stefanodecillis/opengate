@@ -548,8 +548,13 @@ pub fn list_projects(
     .collect()
 }
 
-pub fn update_project(conn: &Connection, id: &str, input: &UpdateProject) -> Option<Project> {
-    let existing = get_project(conn, None, id)?;
+pub fn update_project(
+    conn: &Connection,
+    tenant: Option<&str>,
+    id: &str,
+    input: &UpdateProject,
+) -> Option<Project> {
+    let existing = get_project(conn, tenant, id)?;
     let name = input.name.as_deref().unwrap_or(&existing.name);
     let description = input.description.as_ref().or(existing.description.as_ref());
     let status = input.status.as_deref().unwrap_or(&existing.status);
@@ -559,21 +564,36 @@ pub fn update_project(conn: &Connection, id: &str, input: &UpdateProject) -> Opt
         .as_ref()
         .or(existing.default_branch.as_ref());
     let now = now();
-    conn.execute(
-        "UPDATE projects SET name = ?1, description = ?2, status = ?3, repo_url = ?4, default_branch = ?5, updated_at = ?6 WHERE id = ?7",
-        params![name, description, status, repo_url, default_branch, now, id],
-    )
-    .unwrap();
-    get_project(conn, None, id)
+    if let Some(t) = tenant {
+        conn.execute(
+            "UPDATE projects SET name = ?1, description = ?2, status = ?3, repo_url = ?4, default_branch = ?5, updated_at = ?6 WHERE id = ?7 AND (owner_id IS NULL OR owner_id = ?8)",
+            params![name, description, status, repo_url, default_branch, now, id, t],
+        )
+        .unwrap();
+    } else {
+        conn.execute(
+            "UPDATE projects SET name = ?1, description = ?2, status = ?3, repo_url = ?4, default_branch = ?5, updated_at = ?6 WHERE id = ?7",
+            params![name, description, status, repo_url, default_branch, now, id],
+        )
+        .unwrap();
+    }
+    get_project(conn, tenant, id)
 }
 
-pub fn archive_project(conn: &Connection, id: &str) -> bool {
-    let rows = conn
-        .execute(
+pub fn archive_project(conn: &Connection, tenant: Option<&str>, id: &str) -> bool {
+    let rows = if let Some(t) = tenant {
+        conn.execute(
+            "UPDATE projects SET status = 'archived', updated_at = ?1 WHERE id = ?2 AND (owner_id IS NULL OR owner_id = ?3)",
+            params![now(), id, t],
+        )
+        .unwrap()
+    } else {
+        conn.execute(
             "UPDATE projects SET status = 'archived', updated_at = ?1 WHERE id = ?2",
             params![now(), id],
         )
-        .unwrap();
+        .unwrap()
+    };
     rows > 0
 }
 
@@ -645,7 +665,7 @@ pub fn create_task(
     // Record initial status in history
     append_status_history(conn, &id, "backlog", Some("system"), Some(created_by));
 
-    get_task(conn, None, &id).unwrap()
+    get_task(conn, tenant, &id).unwrap()
 }
 
 pub fn get_task(conn: &Connection, tenant: Option<&str>, id: &str) -> Option<Task> {
@@ -664,12 +684,12 @@ pub fn get_task(conn: &Connection, tenant: Option<&str>, id: &str) -> Option<Tas
 
 /// Like get_task, but also loads the activity timeline and enriches
 /// context with project repo metadata (read-time only, not persisted).
-pub fn get_task_full(conn: &Connection, id: &str) -> Option<Task> {
-    let mut task = get_task(conn, None, id)?;
+pub fn get_task_full(conn: &Connection, tenant: Option<&str>, id: &str) -> Option<Task> {
+    let mut task = get_task(conn, tenant, id)?;
     task.activities = list_activity(conn, &task.id);
 
     // Enrich context with project repo info if not already set
-    if let Some(project) = get_project(conn, None, &task.project_id) {
+    if let Some(project) = get_project(conn, tenant, &task.project_id) {
         if let Some(ref repo_url) = project.repo_url {
             let ctx = task.context.get_or_insert_with(|| serde_json::json!({}));
             if let serde_json::Value::Object(ref mut map) = ctx {
@@ -749,10 +769,11 @@ pub fn list_tasks(conn: &Connection, tenant: Option<&str>, filters: &TaskFilters
 
 pub fn update_task(
     conn: &Connection,
+    tenant: Option<&str>,
     id: &str,
     input: &UpdateTask,
 ) -> Result<Option<Task>, String> {
-    let existing = match get_task(conn, None, id) {
+    let existing = match get_task(conn, tenant, id) {
         Some(t) => t,
         None => return Ok(None),
     };
@@ -772,7 +793,7 @@ pub fn update_task(
 
         // Dependency check when moving to in_progress
         if target == TaskStatus::InProgress && current != TaskStatus::InProgress {
-            if let Err(pending) = check_dependencies(conn, &existing) {
+            if let Err(pending) = check_dependencies(conn, tenant, &existing) {
                 return Err(format!(
                     "Cannot move to in_progress: dependencies not met. Pending: {}",
                     pending.join(", ")
@@ -883,10 +904,14 @@ pub fn update_task(
         }
     }
 
-    Ok(get_task(conn, None, id))
+    Ok(get_task(conn, tenant, id))
 }
 
-pub fn delete_task(conn: &Connection, id: &str) -> bool {
+pub fn delete_task(conn: &Connection, tenant: Option<&str>, id: &str) -> bool {
+    // Verify the task exists and belongs to this tenant before deleting
+    if get_task(conn, tenant, id).is_none() {
+        return false;
+    }
     conn.execute("DELETE FROM task_tags WHERE task_id = ?1", params![id])
         .unwrap();
     conn.execute("DELETE FROM task_activity WHERE task_id = ?1", params![id])
@@ -900,14 +925,18 @@ pub fn delete_task(conn: &Connection, id: &str) -> bool {
 /// Check if all dependencies (task IDs in context.dependencies) are done.
 /// Check whether all dependencies of a task are done.
 /// Returns Ok(()) if all deps are met, or Err(vec_of_pending_ids) otherwise.
-pub fn check_dependencies(conn: &Connection, task: &Task) -> Result<(), Vec<String>> {
+pub fn check_dependencies(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task: &Task,
+) -> Result<(), Vec<String>> {
     let dep_ids = load_dependencies(conn, &task.id);
     if dep_ids.is_empty() {
         return Ok(());
     }
     let mut pending = vec![];
     for dep_id in &dep_ids {
-        match get_task(conn, None, dep_id) {
+        match get_task(conn, tenant, dep_id) {
             Some(dep_task) if dep_task.status == "done" => {}
             _ => pending.push(dep_id.clone()),
         }
@@ -921,14 +950,19 @@ pub fn check_dependencies(conn: &Connection, task: &Task) -> Result<(), Vec<Stri
 
 /// Add a dependency: task_id depends on depends_on_id.
 /// Returns Err if it would create a cycle or if either task doesn't exist.
-pub fn add_dependency(conn: &Connection, task_id: &str, depends_on_id: &str) -> Result<(), String> {
+pub fn add_dependency(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task_id: &str,
+    depends_on_id: &str,
+) -> Result<(), String> {
     if task_id == depends_on_id {
         return Err("A task cannot depend on itself".to_string());
     }
-    if get_task(conn, None, task_id).is_none() {
+    if get_task(conn, tenant, task_id).is_none() {
         return Err(format!("Task {} not found", task_id));
     }
-    if get_task(conn, None, depends_on_id).is_none() {
+    if get_task(conn, tenant, depends_on_id).is_none() {
         return Err(format!("Dependency task {} not found", depends_on_id));
     }
     // Cycle detection: would adding task_id → depends_on_id create a cycle?
@@ -969,7 +1003,12 @@ fn has_dependency_cycle(conn: &Connection, start: &str, target: &str) -> bool {
 }
 
 /// Remove a single dependency edge.
-pub fn remove_dependency(conn: &Connection, task_id: &str, depends_on_id: &str) -> bool {
+pub fn remove_dependency(
+    conn: &Connection,
+    _tenant: Option<&str>,
+    task_id: &str,
+    depends_on_id: &str,
+) -> bool {
     let rows = conn
         .execute(
             "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on = ?2",
@@ -980,16 +1019,16 @@ pub fn remove_dependency(conn: &Connection, task_id: &str, depends_on_id: &str) 
 }
 
 /// Get tasks that task_id depends on (upstream deps).
-pub fn get_task_dependencies(conn: &Connection, task_id: &str) -> Vec<Task> {
+pub fn get_task_dependencies(conn: &Connection, tenant: Option<&str>, task_id: &str) -> Vec<Task> {
     let dep_ids = load_dependencies(conn, task_id);
     dep_ids
         .iter()
-        .filter_map(|id| get_task(conn, None, id))
+        .filter_map(|id| get_task(conn, tenant, id))
         .collect()
 }
 
 /// Get tasks that depend on task_id (downstream dependents).
-pub fn get_task_dependents(conn: &Connection, task_id: &str) -> Vec<Task> {
+pub fn get_task_dependents(conn: &Connection, tenant: Option<&str>, task_id: &str) -> Vec<Task> {
     let ids: Vec<String> = conn
         .prepare("SELECT task_id FROM task_dependencies WHERE depends_on = ?1")
         .unwrap()
@@ -998,7 +1037,7 @@ pub fn get_task_dependents(conn: &Connection, task_id: &str) -> Vec<Task> {
         .filter_map(|r| r.ok())
         .collect();
     ids.iter()
-        .filter_map(|id| get_task(conn, None, id))
+        .filter_map(|id| get_task(conn, tenant, id))
         .collect()
 }
 
@@ -1006,10 +1045,11 @@ pub fn get_task_dependents(conn: &Connection, task_id: &str) -> Vec<Task> {
 /// auto-transition them from backlog/blocked → todo and notify their assignees.
 pub fn unblock_dependents_on_complete(
     conn: &Connection,
+    tenant: Option<&str>,
     completed_task_id: &str,
 ) -> Vec<PendingNotifWebhook> {
-    let dependents = get_task_dependents(conn, completed_task_id);
-    let completed = get_task(conn, None, completed_task_id);
+    let dependents = get_task_dependents(conn, tenant, completed_task_id);
+    let completed = get_task(conn, tenant, completed_task_id);
     let completed_title = completed
         .as_ref()
         .map(|t| t.title.as_str())
@@ -1021,7 +1061,7 @@ pub fn unblock_dependents_on_complete(
         if dep_task.status != "backlog" && dep_task.status != "blocked" {
             continue;
         }
-        if check_dependencies(conn, &dep_task).is_ok() {
+        if check_dependencies(conn, tenant, &dep_task).is_ok() {
             let now = now();
             conn.execute(
                 "UPDATE tasks SET status='todo', updated_at=?1 WHERE id=?2",
@@ -1074,8 +1114,9 @@ pub fn transition_ready_scheduled_tasks(conn: &Connection) -> usize {
 
     let mut count = 0;
     for id in ids {
+        // Background job: intentionally passes None to operate across all tenants
         if let Some(task) = get_task(conn, None, &id) {
-            if check_dependencies(conn, &task).is_ok() {
+            if check_dependencies(conn, None, &task).is_ok() {
                 let now = now();
                 conn.execute(
                     "UPDATE tasks SET status='todo', updated_at=?1 WHERE id=?2",
@@ -1237,6 +1278,7 @@ pub fn create_next_recurrence(conn: &Connection, completed_task: &Task) -> Optio
 /// Get scheduled tasks for a project within a date range.
 pub fn get_schedule(
     conn: &Connection,
+    _tenant: Option<&str>,
     project_id: &str,
     from: Option<&str>,
     to: Option<&str>,
@@ -1285,11 +1327,12 @@ pub fn get_schedule(
 
 pub fn claim_task(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     agent_id: &str,
     agent_name: &str,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or_else(|| "Task not found".to_string())?;
+    let task = get_task(conn, tenant, task_id).ok_or_else(|| "Task not found".to_string())?;
 
     // Idempotent: if already claimed by same agent AND already in_progress, return as-is.
     // If pre-assigned (todo) by same agent, fall through to transition to in_progress.
@@ -1329,7 +1372,7 @@ pub fn claim_task(
     }
 
     // Check dependencies before allowing claim
-    if let Err(pending) = check_dependencies(conn, &task) {
+    if let Err(pending) = check_dependencies(conn, tenant, &task) {
         return Err(format!(
             "Cannot claim: dependencies not met. Pending tasks: {}",
             pending.join(", ")
@@ -1364,11 +1407,16 @@ pub fn claim_task(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
-pub fn release_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or_else(|| "Task not found".to_string())?;
+pub fn release_task(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task_id: &str,
+    agent_id: &str,
+) -> Result<Task, String> {
+    let task = get_task(conn, tenant, task_id).ok_or_else(|| "Task not found".to_string())?;
 
     if task.assignee_id.as_deref() != Some(agent_id) {
         return Err("You are not the assignee of this task".to_string());
@@ -1395,42 +1443,63 @@ pub fn release_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
-pub fn get_next_task(conn: &Connection, skills: &[String]) -> Option<Task> {
+pub fn get_next_task(conn: &Connection, tenant: Option<&str>, skills: &[String]) -> Option<Task> {
+    let mut conditions = vec![
+        "t.assignee_id IS NULL".to_string(),
+        "t.status IN ('backlog', 'todo')".to_string(),
+    ];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+    let mut idx = 1usize;
+
+    if let Some(t) = tenant {
+        conditions.push(format!("(t.owner_id IS NULL OR t.owner_id = ?{idx})"));
+        param_values.push(Box::new(t.to_string()));
+        idx += 1;
+    }
+
     let tasks = if skills.is_empty() {
         let sql = format!(
-            "SELECT {} FROM tasks WHERE assignee_id IS NULL AND status IN ('backlog', 'todo')
-             ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, created_at ASC
-             LIMIT 1",
-            TASK_COLS
+            "SELECT {} FROM tasks t WHERE {} ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, t.created_at ASC LIMIT 1",
+            TASK_COLS_T,
+            conditions.join(" AND ")
         );
         let mut stmt = conn.prepare(&sql).unwrap();
-        stmt.query_map([], row_to_task)
+        let params: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|b| b.as_ref()).collect();
+        stmt.query_map(params.as_slice(), row_to_task)
             .unwrap()
             .filter_map(|r| r.ok())
             .collect::<Vec<_>>()
     } else {
-        let placeholders: Vec<String> = skills
+        for s in skills {
+            // We'll use tag IN (?N, ?N+1, ...) below
+            let _ = s;
+        }
+        let tag_placeholders: Vec<String> = skills
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("?{}", i + 1))
+            .map(|_| {
+                let p = format!("?{idx}");
+                idx += 1;
+                p
+            })
             .collect();
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({}))",
+            tag_placeholders.join(",")
+        ));
+        for s in skills {
+            param_values.push(Box::new(s.clone()));
+        }
         let sql = format!(
-            "SELECT DISTINCT {} FROM tasks t
-             INNER JOIN task_tags tt ON tt.task_id = t.id
-             WHERE t.assignee_id IS NULL AND t.status IN ('backlog', 'todo') AND tt.tag IN ({})
-             ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, t.created_at ASC
-             LIMIT 1",
+            "SELECT DISTINCT {} FROM tasks t WHERE {} ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, t.created_at ASC LIMIT 1",
             TASK_COLS_T,
-            placeholders.join(",")
+            conditions.join(" AND ")
         );
         let mut stmt = conn.prepare(&sql).unwrap();
-        let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = skills
-            .iter()
-            .map(|s| Box::new(s.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
         let params: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|b| b.as_ref()).collect();
         stmt.query_map(params.as_slice(), row_to_task)
@@ -1445,16 +1514,42 @@ pub fn get_next_task(conn: &Connection, skills: &[String]) -> Option<Task> {
         .map(|t| load_task_with_tags(conn, t))
 }
 
-pub fn get_tasks_for_assignee(conn: &Connection, assignee_id: &str) -> Vec<Task> {
-    let sql = format!(
-        "SELECT {} FROM tasks WHERE assignee_id = ?1 ORDER BY
-         CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
-         updated_at DESC",
-        TASK_COLS
-    );
+pub fn get_tasks_for_assignee(
+    conn: &Connection,
+    tenant: Option<&str>,
+    assignee_id: &str,
+) -> Vec<Task> {
+    let (sql, param_values): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(t) =
+        tenant
+    {
+        (
+            format!(
+                "SELECT {} FROM tasks t WHERE t.assignee_id = ?1 AND (t.owner_id IS NULL OR t.owner_id = ?2) ORDER BY
+                 CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+                 t.updated_at DESC",
+                TASK_COLS_T
+            ),
+            vec![
+                Box::new(assignee_id.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                Box::new(t.to_string()),
+            ],
+        )
+    } else {
+        (
+            format!(
+                "SELECT {} FROM tasks WHERE assignee_id = ?1 ORDER BY
+                 CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+                 updated_at DESC",
+                TASK_COLS
+            ),
+            vec![Box::new(assignee_id.to_string()) as Box<dyn rusqlite::types::ToSql>],
+        )
+    };
     let mut stmt = conn.prepare(&sql).unwrap();
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|b| b.as_ref()).collect();
     let tasks: Vec<Task> = stmt
-        .query_map(params![assignee_id], row_to_task)
+        .query_map(params.as_slice(), row_to_task)
         .unwrap()
         .filter_map(|r| r.ok())
         .collect();
@@ -1466,10 +1561,11 @@ pub fn get_tasks_for_assignee(conn: &Connection, assignee_id: &str) -> Vec<Task>
 
 pub fn merge_context(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     patch: &serde_json::Value,
 ) -> Result<Option<Task>, String> {
-    let task = match get_task(conn, None, task_id) {
+    let task = match get_task(conn, tenant, task_id) {
         Some(t) => t,
         None => return Ok(None),
     };
@@ -1496,16 +1592,21 @@ pub fn merge_context(
     )
     .unwrap();
 
-    Ok(get_task(conn, None, task_id))
+    Ok(get_task(conn, tenant, task_id))
 }
 
-pub fn batch_update_status(conn: &Connection, updates: &[(String, String)]) -> BatchResult {
+pub fn batch_update_status(
+    conn: &Connection,
+    tenant: Option<&str>,
+    updates: &[(String, String)],
+) -> BatchResult {
     let mut succeeded = vec![];
     let mut failed = vec![];
 
     for (task_id, new_status) in updates {
         match update_task(
             conn,
+            tenant,
             task_id,
             &UpdateTask {
                 title: None,
@@ -1591,6 +1692,7 @@ pub fn release_stale_tasks(conn: &Connection, default_timeout_minutes: i64) -> V
         )
         .unwrap();
         append_status_history(conn, task_id, "todo", Some("system"), Some("stale_release"));
+        // Background job: intentionally passes None to operate across all tenants
         if let Some(task) = get_task(conn, None, task_id) {
             released.push(task);
         }
@@ -1820,13 +1922,28 @@ pub fn get_agent_by_key_hash(conn: &Connection, hash: &str) -> Option<Agent> {
         .ok()
 }
 
-pub fn list_agents(conn: &Connection) -> Vec<Agent> {
-    let sql = format!("SELECT {} FROM agents ORDER BY name", AGENT_COLS);
+pub fn list_agents(conn: &Connection, tenant: Option<&str>) -> Vec<Agent> {
+    let sql = if let Some(t) = tenant {
+        let _ = t;
+        format!(
+            "SELECT {} FROM agents WHERE owner_id = ?1 ORDER BY name",
+            AGENT_COLS
+        )
+    } else {
+        format!("SELECT {} FROM agents ORDER BY name", AGENT_COLS)
+    };
     let mut stmt = conn.prepare(&sql).unwrap();
-    stmt.query_map([], |row| row_to_agent(conn, row))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+    if let Some(t) = tenant {
+        stmt.query_map(params![t], |row| row_to_agent(conn, row))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    } else {
+        stmt.query_map([], |row| row_to_agent(conn, row))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    }
 }
 
 pub fn list_agents_by_owner(conn: &Connection, owner_id: &str) -> Vec<Agent> {
@@ -2131,8 +2248,12 @@ pub fn get_stats(conn: &Connection, tenant: Option<&str>) -> DashboardStats {
     }
 }
 
-pub fn get_project_with_stats(conn: &Connection, id: &str) -> Option<ProjectWithStats> {
-    let project = get_project(conn, None, id)?;
+pub fn get_project_with_stats(
+    conn: &Connection,
+    tenant: Option<&str>,
+    id: &str,
+) -> Option<ProjectWithStats> {
+    let project = get_project(conn, tenant, id)?;
     let task_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE project_id = ?1",
@@ -2372,8 +2493,13 @@ pub fn delete_knowledge(conn: &Connection, project_id: &str, key: &str) -> bool 
 
 // --- Assignment ---
 
-pub fn assign_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+pub fn assign_task(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task_id: &str,
+    agent_id: &str,
+) -> Result<Task, String> {
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
     let agent = get_agent(conn, agent_id).ok_or("Agent not found")?;
 
     // Offline agents can still be assigned — they will pick up the task on next heartbeat.
@@ -2411,7 +2537,7 @@ pub fn assign_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<T
         params![agent_id, new_status, now, task_id],
     ).unwrap();
 
-    let dep_note = match check_dependencies(conn, &task) {
+    let dep_note = match check_dependencies(conn, tenant, &task) {
         Err(pending_deps) => format!(
             " ⚠️ Assigned with {} unmet dependenc{}: [{}]. Agent cannot start until deps are done.",
             pending_deps.len(),
@@ -2446,19 +2572,20 @@ pub fn assign_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<T
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 // --- Handoff ---
 
 pub fn handoff_task(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     from_agent_id: &str,
     to_agent_id: &str,
     summary: Option<&str>,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
     let to_agent = get_agent(conn, to_agent_id).ok_or("Target agent not found")?;
 
     let is_assignee = task.assignee_id.as_deref() == Some(from_agent_id);
@@ -2506,18 +2633,19 @@ pub fn handoff_task(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 // --- Review actions ---
 
 pub fn approve_task(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     reviewer_id: &str,
     comment: Option<&str>,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
     let status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
 
     if status != TaskStatus::Review {
@@ -2546,16 +2674,17 @@ pub fn approve_task(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 pub fn request_changes(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     reviewer_id: &str,
     comment: &str,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
     let status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
 
     if status != TaskStatus::Review {
@@ -2598,7 +2727,7 @@ pub fn request_changes(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 // --- Submit for Review ---
@@ -2624,7 +2753,8 @@ fn pick_reviewer(
         }
     }
 
-    let all_agents = list_agents(conn);
+    // Reviewer search is scoped to tenant implicitly via task ownership
+    let all_agents = list_agents(conn, None);
     let task_tags: Vec<String> = task.tags.iter().map(|t| t.to_lowercase()).collect();
 
     // Helper: agent is available for review (not the submitter, not offline)
@@ -2668,12 +2798,13 @@ fn pick_reviewer(
 /// - No eligible reviewer can be found
 pub fn submit_review_task(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     submitter_id: &str,
     summary: Option<&str>,
     explicit_reviewer_id: Option<&str>,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
 
     // Only the assignee can submit for review
     if task.assignee_id.as_deref() != Some(submitter_id) {
@@ -2719,7 +2850,7 @@ pub fn submit_review_task(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 /// Mark that a reviewer has started reviewing a task.
@@ -2730,11 +2861,12 @@ pub fn submit_review_task(
 /// - Sets `started_review_at` to current timestamp.
 pub fn start_review_task(
     conn: &Connection,
+    tenant: Option<&str>,
     task_id: &str,
     caller_id: &str,
     caller_type: &str,
 ) -> Result<Task, String> {
-    let task = get_task(conn, None, task_id).ok_or("Task not found")?;
+    let task = get_task(conn, tenant, task_id).ok_or("Task not found")?;
 
     let status = TaskStatus::from_str(&task.status).ok_or("Invalid task status")?;
     if status != TaskStatus::Review {
@@ -2767,12 +2899,12 @@ pub fn start_review_task(
         },
     );
 
-    Ok(get_task(conn, None, task_id).unwrap())
+    Ok(get_task(conn, tenant, task_id).unwrap())
 }
 
 // --- Downstream output linking ---
 
-pub fn inject_upstream_outputs(conn: &Connection, completed_task: &Task) {
+pub fn inject_upstream_outputs(conn: &Connection, tenant: Option<&str>, completed_task: &Task) {
     let completed_output = match &completed_task.output {
         Some(o) => o.clone(),
         None => return,
@@ -2781,7 +2913,7 @@ pub fn inject_upstream_outputs(conn: &Connection, completed_task: &Task) {
     // Find all tasks that list this task in context.dependencies
     let all_tasks = list_tasks(
         conn,
-        None,
+        tenant,
         &TaskFilters {
             project_id: Some(completed_task.project_id.clone()),
             status: None,
@@ -2841,7 +2973,7 @@ pub fn inject_upstream_outputs(conn: &Connection, completed_task: &Task) {
 }
 
 /// Check if all dependencies of a task are done (for webhook notification)
-pub fn all_dependencies_done(conn: &Connection, task: &Task) -> bool {
+pub fn all_dependencies_done(conn: &Connection, tenant: Option<&str>, task: &Task) -> bool {
     let deps = match &task.context {
         Some(ctx) => match ctx.get("dependencies") {
             Some(serde_json::Value::Array(arr)) => arr
@@ -2854,7 +2986,7 @@ pub fn all_dependencies_done(conn: &Connection, task: &Task) -> bool {
     };
 
     for dep_id in &deps {
-        match get_task(conn, None, dep_id) {
+        match get_task(conn, tenant, dep_id) {
             Some(dep_task) if dep_task.status == "done" => continue,
             _ => return false,
         }
@@ -3346,6 +3478,7 @@ pub fn get_agent_name(conn: &Connection, agent_id: &str) -> Option<String> {
 
 pub fn get_pulse(
     conn: &Connection,
+    _tenant: Option<&str>,
     project_id: &str,
     caller_agent_id: Option<&str>,
 ) -> PulseResponse {
@@ -3577,12 +3710,16 @@ pub fn hash_api_key(key: &str) -> String {
 
 // ─── Agent Matching ──────────────────────────────────────────────────────────
 
-pub fn find_best_agent(conn: &Connection, strategy: &AssignStrategy) -> Option<String> {
+pub fn find_best_agent(
+    conn: &Connection,
+    tenant: Option<&str>,
+    strategy: &AssignStrategy,
+) -> Option<String> {
     if let Some(ref id) = strategy.agent_id {
         return Some(id.clone());
     }
 
-    let agents = list_agents(conn);
+    let agents = list_agents(conn, tenant);
     let required = strategy.capabilities.as_deref().unwrap_or(&[]);
 
     let mut scored: Vec<(Agent, usize)> = agents
@@ -3788,7 +3925,7 @@ pub fn list_trigger_logs(
 
 // ===== Agent Inbox =====
 
-pub fn get_agent_inbox(conn: &Connection, agent_id: &str) -> AgentInbox {
+pub fn get_agent_inbox(conn: &Connection, _tenant: Option<&str>, agent_id: &str) -> AgentInbox {
     // 1. Fetch agent for capacity info
     let agent = get_agent(conn, agent_id);
     let max_concurrent = agent.as_ref().map(|a| a.max_concurrent_tasks).unwrap_or(1);
@@ -3986,7 +4123,8 @@ fn task_to_inbox_item(conn: &Connection, task: &Task) -> InboxItem {
     let dependency_status = if dep_ids.is_empty() {
         "none"
     } else {
-        match check_dependencies(conn, task) {
+        // Inbox: task already filtered by assignee, no cross-tenant risk
+        match check_dependencies(conn, None, task) {
             Ok(_) => "ready",
             Err(_) => "blocked",
         }

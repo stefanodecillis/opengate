@@ -43,13 +43,13 @@ impl ProjectStore for SqliteBackend {
         id: &str,
         input: &UpdateProject,
     ) -> Option<Project> {
-        db_ops::update_project(&self.lock(), id, input)
+        db_ops::update_project(&self.lock(), _tenant, id, input)
     }
     fn archive_project(&self, _tenant: Option<&str>, id: &str) -> bool {
-        db_ops::archive_project(&self.lock(), id)
+        db_ops::archive_project(&self.lock(), _tenant, id)
     }
     fn get_project_with_stats(&self, _tenant: Option<&str>, id: &str) -> Option<ProjectWithStats> {
-        db_ops::get_project_with_stats(&self.lock(), id)
+        db_ops::get_project_with_stats(&self.lock(), _tenant, id)
     }
     fn get_schedule(
         &self,
@@ -58,7 +58,7 @@ impl ProjectStore for SqliteBackend {
         from: Option<&str>,
         to: Option<&str>,
     ) -> Vec<ScheduledTaskEntry> {
-        db_ops::get_schedule(&self.lock(), project_id, from, to)
+        db_ops::get_schedule(&self.lock(), _tenant, project_id, from, to)
     }
     fn get_pulse(
         &self,
@@ -66,7 +66,7 @@ impl ProjectStore for SqliteBackend {
         project_id: &str,
         caller_agent_id: Option<&str>,
     ) -> PulseResponse {
-        db_ops::get_pulse(&self.lock(), project_id, caller_agent_id)
+        db_ops::get_pulse(&self.lock(), _tenant, project_id, caller_agent_id)
     }
 }
 
@@ -92,10 +92,10 @@ impl TaskStore for SqliteBackend {
         id: &str,
         input: &UpdateTask,
     ) -> Result<Option<Task>, StorageError> {
-        db_ops::update_task(&self.lock(), id, input).map_err(StorageError)
+        db_ops::update_task(&self.lock(), _tenant, id, input).map_err(StorageError)
     }
     fn delete_task(&self, _tenant: Option<&str>, id: &str) -> bool {
-        db_ops::delete_task(&self.lock(), id)
+        db_ops::delete_task(&self.lock(), _tenant, id)
     }
     fn claim_task(
         &self,
@@ -104,7 +104,8 @@ impl TaskStore for SqliteBackend {
         agent_id: &str,
         agent_name: &str,
     ) -> Result<Task, StorageError> {
-        db_ops::claim_task(&self.lock(), task_id, agent_id, agent_name).map_err(StorageError)
+        db_ops::claim_task(&self.lock(), _tenant, task_id, agent_id, agent_name)
+            .map_err(StorageError)
     }
     fn release_task(
         &self,
@@ -112,13 +113,13 @@ impl TaskStore for SqliteBackend {
         task_id: &str,
         agent_id: &str,
     ) -> Result<Task, StorageError> {
-        db_ops::release_task(&self.lock(), task_id, agent_id).map_err(StorageError)
+        db_ops::release_task(&self.lock(), _tenant, task_id, agent_id).map_err(StorageError)
     }
     fn get_next_task(&self, _tenant: Option<&str>, skills: &[String]) -> Option<Task> {
-        db_ops::get_next_task(&self.lock(), skills)
+        db_ops::get_next_task(&self.lock(), _tenant, skills)
     }
     fn get_tasks_for_assignee(&self, _tenant: Option<&str>, assignee_id: &str) -> Vec<Task> {
-        db_ops::get_tasks_for_assignee(&self.lock(), assignee_id)
+        db_ops::get_tasks_for_assignee(&self.lock(), _tenant, assignee_id)
     }
     fn merge_context(
         &self,
@@ -126,14 +127,14 @@ impl TaskStore for SqliteBackend {
         task_id: &str,
         patch: &serde_json::Value,
     ) -> Result<Option<Task>, StorageError> {
-        db_ops::merge_context(&self.lock(), task_id, patch).map_err(StorageError)
+        db_ops::merge_context(&self.lock(), _tenant, task_id, patch).map_err(StorageError)
     }
     fn batch_update_status(
         &self,
         _tenant: Option<&str>,
         updates: &[(String, String)],
     ) -> BatchResult {
-        db_ops::batch_update_status(&self.lock(), updates)
+        db_ops::batch_update_status(&self.lock(), _tenant, updates)
     }
     fn release_stale_tasks(
         &self,
@@ -163,7 +164,7 @@ impl TaskStore for SqliteBackend {
         db_ops::append_status_history(&self.lock(), task_id, new_status, agent_type, agent_id)
     }
     fn check_dependencies(&self, _tenant: Option<&str>, task: &Task) -> Result<(), Vec<String>> {
-        db_ops::check_dependencies(&self.lock(), task)
+        db_ops::check_dependencies(&self.lock(), _tenant, task)
     }
     fn add_dependency(
         &self,
@@ -171,29 +172,29 @@ impl TaskStore for SqliteBackend {
         task_id: &str,
         depends_on_id: &str,
     ) -> Result<(), StorageError> {
-        db_ops::add_dependency(&self.lock(), task_id, depends_on_id).map_err(StorageError)
+        db_ops::add_dependency(&self.lock(), _tenant, task_id, depends_on_id).map_err(StorageError)
     }
     fn remove_dependency(&self, _tenant: Option<&str>, task_id: &str, depends_on_id: &str) -> bool {
-        db_ops::remove_dependency(&self.lock(), task_id, depends_on_id)
+        db_ops::remove_dependency(&self.lock(), _tenant, task_id, depends_on_id)
     }
     fn get_task_dependencies(&self, _tenant: Option<&str>, task_id: &str) -> Vec<Task> {
-        db_ops::get_task_dependencies(&self.lock(), task_id)
+        db_ops::get_task_dependencies(&self.lock(), _tenant, task_id)
     }
     fn get_task_dependents(&self, _tenant: Option<&str>, task_id: &str) -> Vec<Task> {
-        db_ops::get_task_dependents(&self.lock(), task_id)
+        db_ops::get_task_dependents(&self.lock(), _tenant, task_id)
     }
     fn unblock_dependents_on_complete(
         &self,
         _tenant: Option<&str>,
         completed_task_id: &str,
     ) -> Vec<PendingNotifWebhook> {
-        db_ops::unblock_dependents_on_complete(&self.lock(), completed_task_id)
+        db_ops::unblock_dependents_on_complete(&self.lock(), _tenant, completed_task_id)
     }
     fn all_dependencies_done(&self, _tenant: Option<&str>, task: &Task) -> bool {
-        db_ops::all_dependencies_done(&self.lock(), task)
+        db_ops::all_dependencies_done(&self.lock(), _tenant, task)
     }
     fn inject_upstream_outputs(&self, _tenant: Option<&str>, completed_task: &Task) {
-        db_ops::inject_upstream_outputs(&self.lock(), completed_task)
+        db_ops::inject_upstream_outputs(&self.lock(), _tenant, completed_task)
     }
     fn assign_task(
         &self,
@@ -201,7 +202,7 @@ impl TaskStore for SqliteBackend {
         task_id: &str,
         agent_id: &str,
     ) -> Result<Task, StorageError> {
-        db_ops::assign_task(&self.lock(), task_id, agent_id).map_err(StorageError)
+        db_ops::assign_task(&self.lock(), _tenant, task_id, agent_id).map_err(StorageError)
     }
     fn handoff_task(
         &self,
@@ -211,8 +212,15 @@ impl TaskStore for SqliteBackend {
         to_agent_id: &str,
         summary: Option<&str>,
     ) -> Result<Task, StorageError> {
-        db_ops::handoff_task(&self.lock(), task_id, from_agent_id, to_agent_id, summary)
-            .map_err(StorageError)
+        db_ops::handoff_task(
+            &self.lock(),
+            _tenant,
+            task_id,
+            from_agent_id,
+            to_agent_id,
+            summary,
+        )
+        .map_err(StorageError)
     }
     fn approve_task(
         &self,
@@ -221,7 +229,8 @@ impl TaskStore for SqliteBackend {
         reviewer_id: &str,
         comment: Option<&str>,
     ) -> Result<Task, StorageError> {
-        db_ops::approve_task(&self.lock(), task_id, reviewer_id, comment).map_err(StorageError)
+        db_ops::approve_task(&self.lock(), _tenant, task_id, reviewer_id, comment)
+            .map_err(StorageError)
     }
     fn request_changes(
         &self,
@@ -230,7 +239,8 @@ impl TaskStore for SqliteBackend {
         reviewer_id: &str,
         comment: &str,
     ) -> Result<Task, StorageError> {
-        db_ops::request_changes(&self.lock(), task_id, reviewer_id, comment).map_err(StorageError)
+        db_ops::request_changes(&self.lock(), _tenant, task_id, reviewer_id, comment)
+            .map_err(StorageError)
     }
     fn submit_review_task(
         &self,
@@ -242,6 +252,7 @@ impl TaskStore for SqliteBackend {
     ) -> Result<Task, StorageError> {
         db_ops::submit_review_task(
             &self.lock(),
+            _tenant,
             task_id,
             submitter_id,
             summary,
@@ -256,7 +267,7 @@ impl TaskStore for SqliteBackend {
         caller_id: &str,
         caller_type: &str,
     ) -> Result<Task, StorageError> {
-        db_ops::start_review_task(&self.lock(), task_id, caller_id, caller_type)
+        db_ops::start_review_task(&self.lock(), _tenant, task_id, caller_id, caller_type)
             .map_err(StorageError)
     }
 }
@@ -272,7 +283,7 @@ impl AgentStore for SqliteBackend {
         db_ops::get_agent_by_key_hash(&self.lock(), hash)
     }
     fn list_agents(&self, _tenant: Option<&str>) -> Vec<Agent> {
-        db_ops::list_agents(&self.lock())
+        db_ops::list_agents(&self.lock(), _tenant)
     }
     fn list_agents_by_owner(&self, _tenant: Option<&str>, owner_id: &str) -> Vec<Agent> {
         db_ops::list_agents_by_owner(&self.lock(), owner_id)
@@ -287,13 +298,13 @@ impl AgentStore for SqliteBackend {
         db_ops::update_heartbeat(&self.lock(), agent_id)
     }
     fn find_best_agent(&self, _tenant: Option<&str>, strategy: &AssignStrategy) -> Option<String> {
-        db_ops::find_best_agent(&self.lock(), strategy)
+        db_ops::find_best_agent(&self.lock(), _tenant, strategy)
     }
     fn get_agent_name(&self, _tenant: Option<&str>, agent_id: &str) -> Option<String> {
         db_ops::get_agent_name(&self.lock(), agent_id)
     }
     fn get_agent_inbox(&self, _tenant: Option<&str>, agent_id: &str) -> AgentInbox {
-        db_ops::get_agent_inbox(&self.lock(), agent_id)
+        db_ops::get_agent_inbox(&self.lock(), _tenant, agent_id)
     }
 }
 
