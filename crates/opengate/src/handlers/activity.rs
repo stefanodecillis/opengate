@@ -10,17 +10,21 @@ use opengate_models::*;
 
 pub async fn list_activity(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(task_id): Path<String>,
 ) -> Result<Json<Vec<TaskActivity>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let activity = state.storage.list_activity(None, &task_id);
+    let activity = state.storage.list_activity(identity.tenant_id(), &task_id);
     Ok(Json(activity))
 }
 
@@ -30,7 +34,7 @@ pub async fn create_activity(
     Path(task_id): Path<String>,
     Json(input): Json<CreateActivity>,
 ) -> Result<(StatusCode, Json<TaskActivity>), (StatusCode, Json<serde_json::Value>)> {
-    let task = match state.storage.get_task(None, &task_id) {
+    let task = match state.storage.get_task(identity.tenant_id(), &task_id) {
         Some(t) => t,
         None => {
             return Err((
@@ -41,7 +45,7 @@ pub async fn create_activity(
     };
 
     let activity = state.storage.create_activity(
-        None,
+        identity.tenant_id(),
         &task_id,
         identity.author_type(),
         identity.author_id(),

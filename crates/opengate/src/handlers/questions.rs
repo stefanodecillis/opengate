@@ -17,13 +17,16 @@ pub async fn create_question(
     Path(task_id): Path<String>,
     Json(input): Json<CreateQuestion>,
 ) -> Result<(StatusCode, Json<TaskQuestion>), (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
 
     let question = state.storage.create_question(
-        None,
+        identity.tenant_id(),
         &task_id,
         &input,
         identity.author_type(),
@@ -33,7 +36,11 @@ pub async fn create_question(
     // Auto-targeting: if required_capability is set but no explicit target, find matches
     let auto_targets = if question.target_id.is_none() {
         if let Some(ref cap) = question.required_capability {
-            Some(state.storage.auto_target_question(None, &question.id, cap))
+            Some(
+                state
+                    .storage
+                    .auto_target_question(identity.tenant_id(), &question.id, cap),
+            )
         } else {
             None
         }
@@ -45,7 +52,7 @@ pub async fn create_question(
     let question = if auto_targets.is_some() {
         state
             .storage
-            .get_question(None, &question.id)
+            .get_question(identity.tenant_id(), &question.id)
             .unwrap_or(question)
     } else {
         question
@@ -75,7 +82,7 @@ pub async fn create_question(
         "target_id": question.target_id,
     });
     let mut pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         "task.question_asked",
         Some(&task_id),
         &task.project_id,
@@ -86,17 +93,20 @@ pub async fn create_question(
 
     // Handle auto-targeting notification scenarios
     if let Some(targets) = auto_targets {
-        let event_id = state.storage.get_last_event_id(None);
+        let event_id = state.storage.get_last_event_id(identity.tenant_id());
         let question_preview: String = question.question.chars().take(200).collect();
         let task_title = &task.title;
 
         match targets.len() {
             0 => {
                 // No matches — notify task creator if they are an agent
-                if let Some(creator_agent) = state.storage.get_agent(None, &task.created_by) {
+                if let Some(creator_agent) = state
+                    .storage
+                    .get_agent(identity.tenant_id(), &task.created_by)
+                {
                     if creator_agent.id != identity.author_id() {
                         pending.push(state.storage.insert_question_notification(
-                            None,
+                            identity.tenant_id(),
                             &creator_agent.id,
                             event_id,
                             "question_asked",
@@ -121,7 +131,7 @@ pub async fn create_question(
                 for target in &targets {
                     if target.target_type == "agent" {
                         pending.push(state.storage.insert_question_notification(
-                            None,
+                            identity.tenant_id(),
                             &target.target_id,
                             event_id,
                             "question_asked",
@@ -144,40 +154,52 @@ pub async fn create_question(
 /// GET /api/tasks/:id/questions
 pub async fn list_questions(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(task_id): Path<String>,
     Query(query): Query<QuestionQuery>,
 ) -> Result<Json<Vec<TaskQuestion>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let questions = state
-        .storage
-        .list_questions(None, &task_id, query.status.as_deref());
+    let questions =
+        state
+            .storage
+            .list_questions(identity.tenant_id(), &task_id, query.status.as_deref());
     Ok(Json(questions))
 }
 
 /// GET /api/tasks/:id/questions/:qid
 pub async fn get_question(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((task_id, question_id)): Path<(String, String)>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let question = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let question = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
 
     if question.task_id != task_id {
         return Err((
@@ -196,16 +218,22 @@ pub async fn resolve_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<ResolveQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
 
     // Verify question belongs to this task
-    let existing = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let existing = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
     if existing.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -216,7 +244,7 @@ pub async fn resolve_question(
     let question = state
         .storage
         .resolve_question(
-            None,
+            identity.tenant_id(),
             &question_id,
             &input.resolution,
             identity.author_type(),
@@ -250,7 +278,7 @@ pub async fn resolve_question(
         "asked_by_id": existing.asked_by_id,
     });
     let mut pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         "task.question_resolved",
         Some(&task_id),
         &task.project_id,
@@ -261,7 +289,7 @@ pub async fn resolve_question(
 
     // Notify the original question asker if they are an agent and not the resolver
     if existing.asked_by_type == "agent" && existing.asked_by_id != identity.author_id() {
-        let event_id = state.storage.get_last_event_id(None);
+        let event_id = state.storage.get_last_event_id(identity.tenant_id());
         let resolution_preview: String = question
             .resolution
             .as_deref()
@@ -270,7 +298,7 @@ pub async fn resolve_question(
             .take(150)
             .collect();
         pending.push(state.storage.insert_question_notification(
-            None,
+            identity.tenant_id(),
             &existing.asked_by_id,
             event_id,
             "question_resolved",
@@ -304,21 +332,26 @@ pub async fn my_questions(
         }
     };
 
-    let questions =
-        state
-            .storage
-            .list_questions_for_agent(None, &agent_id, query.status.as_deref());
+    let questions = state.storage.list_questions_for_agent(
+        identity.tenant_id(),
+        &agent_id,
+        query.status.as_deref(),
+    );
     Ok(Json(questions))
 }
 
 /// GET /api/projects/:id/questions
 pub async fn project_questions(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
     Query(query): Query<QuestionQuery>,
 ) -> Result<Json<Vec<TaskQuestion>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
@@ -327,7 +360,7 @@ pub async fn project_questions(
 
     let unrouted = query.unrouted.unwrap_or(false);
     let questions = state.storage.list_questions_for_project(
-        None,
+        identity.tenant_id(),
         &project_id,
         query.status.as_deref(),
         unrouted,
@@ -342,14 +375,20 @@ pub async fn create_reply(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<CreateReply>,
 ) -> Result<(StatusCode, Json<QuestionReply>), (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
-    let question = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
+    let question = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
     if question.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -359,7 +398,7 @@ pub async fn create_reply(
 
     let is_resolution = input.is_resolution.unwrap_or(false);
     let reply = state.storage.create_reply(
-        None,
+        identity.tenant_id(),
         &question_id,
         &input,
         identity.author_type(),
@@ -403,7 +442,7 @@ pub async fn create_reply(
         "asked_by_id": question.asked_by_id,
     });
     let mut pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         event_type,
         Some(&task_id),
         &task.project_id,
@@ -413,7 +452,7 @@ pub async fn create_reply(
     );
 
     // Notify question asker + all thread participants (agents) about replies
-    let event_id = state.storage.get_last_event_id(None);
+    let event_id = state.storage.get_last_event_id(identity.tenant_id());
     let reply_preview: String = reply.body.chars().take(150).collect();
     let actor_name = identity.display_name();
     let notif_type = if is_resolution {
@@ -436,7 +475,9 @@ pub async fn create_reply(
     }
 
     // Notify all previous reply authors who are agents (thread participants)
-    let all_replies = state.storage.list_replies(None, &question_id);
+    let all_replies = state
+        .storage
+        .list_replies(identity.tenant_id(), &question_id);
     for r in &all_replies {
         if r.author_type == "agent" && r.author_id != identity.author_id() {
             notified_agents.insert(r.author_id.clone());
@@ -452,7 +493,7 @@ pub async fn create_reply(
 
     for agent_id in &notified_agents {
         pending.push(state.storage.insert_question_notification(
-            None,
+            identity.tenant_id(),
             agent_id,
             event_id,
             notif_type,
@@ -469,19 +510,26 @@ pub async fn create_reply(
 /// GET /api/tasks/:id/questions/:qid/replies
 pub async fn list_replies(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((task_id, question_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<QuestionReply>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
-    let question = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let question = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
     if question.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -489,7 +537,9 @@ pub async fn list_replies(
         ));
     }
 
-    let replies = state.storage.list_replies(None, &question_id);
+    let replies = state
+        .storage
+        .list_replies(identity.tenant_id(), &question_id);
     Ok(Json(replies))
 }
 
@@ -500,14 +550,20 @@ pub async fn dismiss_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<DismissQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
-    let existing = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
+    let existing = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
     if existing.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -517,7 +573,7 @@ pub async fn dismiss_question(
 
     let question = state
         .storage
-        .dismiss_question(None, &question_id, &input.reason)
+        .dismiss_question(identity.tenant_id(), &question_id, &input.reason)
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "Question is not open"})),
@@ -542,7 +598,7 @@ pub async fn dismiss_question(
         "reason": input.reason,
     });
     let pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         "task.question_dismissed",
         Some(&task_id),
         &task.project_id,
@@ -562,14 +618,20 @@ pub async fn assign_question(
     Path((task_id, question_id)): Path<(String, String)>,
     Json(input): Json<AssignQuestion>,
 ) -> Result<Json<TaskQuestion>, (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
-    let existing = state.storage.get_question(None, &question_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Question not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
+    let existing = state
+        .storage
+        .get_question(identity.tenant_id(), &question_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Question not found"})),
+        ))?;
     if existing.task_id != task_id {
         return Err((
             StatusCode::NOT_FOUND,
@@ -579,7 +641,12 @@ pub async fn assign_question(
 
     let question = state
         .storage
-        .assign_question(None, &question_id, &input.target_type, &input.target_id)
+        .assign_question(
+            identity.tenant_id(),
+            &question_id,
+            &input.target_type,
+            &input.target_id,
+        )
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "Failed to assign question"})),
@@ -608,7 +675,7 @@ pub async fn assign_question(
         "target_id": input.target_id,
     });
     let pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         "task.question_assigned",
         Some(&task_id),
         &task.project_id,

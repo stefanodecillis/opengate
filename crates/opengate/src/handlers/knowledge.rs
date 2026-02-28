@@ -10,29 +10,38 @@ use opengate_models::*;
 
 pub async fn list_knowledge(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
     Query(query): Query<KnowledgeSearchQuery>,
 ) -> Result<Json<Vec<KnowledgeEntry>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
         ));
     }
-    let entries = state
-        .storage
-        .list_knowledge(None, &project_id, query.prefix.as_deref());
+    let entries =
+        state
+            .storage
+            .list_knowledge(identity.tenant_id(), &project_id, query.prefix.as_deref());
     Ok(Json(entries))
 }
 
 pub async fn search_knowledge(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
     Query(query): Query<KnowledgeSearchQuery>,
 ) -> Result<Json<Vec<KnowledgeEntry>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
@@ -49,19 +58,25 @@ pub async fn search_knowledge(
         .collect();
 
     let q = query.q.as_deref().unwrap_or("");
-    let entries =
-        state
-            .storage
-            .search_knowledge(None, &project_id, q, &tag_list, query.category.as_deref());
+    let entries = state.storage.search_knowledge(
+        identity.tenant_id(),
+        &project_id,
+        q,
+        &tag_list,
+        query.category.as_deref(),
+    );
     Ok(Json(entries))
 }
 
 pub async fn get_knowledge(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((project_id, key)): Path<(String, String)>,
 ) -> Result<Json<KnowledgeEntry>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.get_knowledge(None, &project_id, &key) {
+    match state
+        .storage
+        .get_knowledge(identity.tenant_id(), &project_id, &key)
+    {
         Some(entry) => Ok(Json(entry)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -76,7 +91,11 @@ pub async fn upsert_knowledge(
     Path((project_id, key)): Path<(String, String)>,
     Json(input): Json<UpsertKnowledge>,
 ) -> Result<Json<KnowledgeEntry>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
@@ -85,10 +104,10 @@ pub async fn upsert_knowledge(
 
     let existed = state
         .storage
-        .get_knowledge(None, &project_id, &key)
+        .get_knowledge(identity.tenant_id(), &project_id, &key)
         .is_some();
     let entry = state.storage.upsert_knowledge(
-        None,
+        identity.tenant_id(),
         &project_id,
         &key,
         &input,
@@ -112,10 +131,13 @@ pub async fn upsert_knowledge(
 
 pub async fn delete_knowledge(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((project_id, key)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.delete_knowledge(None, &project_id, &key) {
+    if state
+        .storage
+        .delete_knowledge(identity.tenant_id(), &project_id, &key)
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((

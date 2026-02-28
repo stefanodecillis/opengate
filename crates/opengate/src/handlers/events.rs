@@ -32,7 +32,7 @@ pub fn emit_task_event(
     });
 
     storage.emit_event(
-        None,
+        identity.tenant_id(),
         event_type,
         Some(&task.id),
         &task.project_id,
@@ -76,7 +76,7 @@ pub fn emit_knowledge_updated(
     });
 
     storage.emit_event(
-        None,
+        identity.tenant_id(),
         "knowledge.updated",
         None,
         project_id,

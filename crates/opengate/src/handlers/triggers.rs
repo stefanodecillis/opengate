@@ -13,7 +13,7 @@ use opengate_models::*;
 /// POST /api/projects/:id/triggers
 pub async fn create_trigger(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
     Json(body): Json<CreateTriggerRequest>,
 ) -> Result<(StatusCode, Json<TriggerCreatedResponse>), StatusCode> {
@@ -21,12 +21,16 @@ pub async fn create_trigger(
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err(StatusCode::NOT_FOUND);
     }
 
     let (trigger, secret) = state.storage.create_webhook_trigger(
-        None,
+        identity.tenant_id(),
         &project_id,
         &body.name,
         &body.action_type,
@@ -42,25 +46,40 @@ pub async fn create_trigger(
 /// GET /api/projects/:id/triggers
 pub async fn list_triggers(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
 ) -> Result<Json<Vec<WebhookTrigger>>, StatusCode> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err(StatusCode::NOT_FOUND);
     }
-    Ok(Json(state.storage.list_webhook_triggers(None, &project_id)))
+    Ok(Json(
+        state
+            .storage
+            .list_webhook_triggers(identity.tenant_id(), &project_id),
+    ))
 }
 
 /// DELETE /api/projects/:id/triggers/:tid
 pub async fn delete_trigger(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((project_id, trigger_id)): Path<(String, String)>,
 ) -> StatusCode {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return StatusCode::NOT_FOUND;
     }
-    if state.storage.delete_webhook_trigger(None, &trigger_id) {
+    if state
+        .storage
+        .delete_webhook_trigger(identity.tenant_id(), &trigger_id)
+    {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -70,13 +89,21 @@ pub async fn delete_trigger(
 /// GET /api/projects/:id/triggers/:tid/logs
 pub async fn list_trigger_logs(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((project_id, trigger_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<WebhookTriggerLog>>, StatusCode> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err(StatusCode::NOT_FOUND);
     }
-    Ok(Json(state.storage.list_trigger_logs(None, &trigger_id, 50)))
+    Ok(Json(state.storage.list_trigger_logs(
+        identity.tenant_id(),
+        &trigger_id,
+        50,
+    )))
 }
 
 // ===== Inbound webhook endpoint (no auth — validated by secret) =====

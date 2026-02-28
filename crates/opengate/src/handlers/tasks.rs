@@ -12,20 +12,20 @@ use opengate_models::*;
 
 pub async fn list_tasks_global(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Query(filters): Query<TaskFilters>,
 ) -> Json<Vec<Task>> {
-    Json(state.storage.list_tasks(None, &filters))
+    Json(state.storage.list_tasks(identity.tenant_id(), &filters))
 }
 
 pub async fn list_tasks_by_project(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(project_id): Path<String>,
     Query(mut filters): Query<TaskFilters>,
 ) -> Json<Vec<Task>> {
     filters.project_id = Some(project_id);
-    Json(state.storage.list_tasks(None, &filters))
+    Json(state.storage.list_tasks(identity.tenant_id(), &filters))
 }
 
 pub async fn create_task(
@@ -34,19 +34,26 @@ pub async fn create_task(
     Path(project_id): Path<String>,
     Json(input): Json<CreateTask>,
 ) -> Result<(StatusCode, Json<Task>), (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_project(None, &project_id).is_none() {
+    if state
+        .storage
+        .get_project(identity.tenant_id(), &project_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Project not found"})),
         ));
     }
 
-    let task = state
-        .storage
-        .create_task(None, &project_id, &input, identity.author_id());
+    let task = state.storage.create_task(
+        identity.tenant_id(),
+        &project_id,
+        &input,
+        identity.author_id(),
+    );
 
     state.storage.create_activity(
-        None,
+        identity.tenant_id(),
         &task.id,
         identity.author_type(),
         identity.author_id(),
@@ -70,10 +77,10 @@ pub async fn create_task(
 
 pub async fn get_task(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.get_task_full(None, &id) {
+    match state.storage.get_task_full(identity.tenant_id(), &id) {
         Some(task) => Ok(Json(task)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -88,17 +95,17 @@ pub async fn update_task(
     Path(id): Path<String>,
     Json(input): Json<UpdateTask>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    let old_task = state.storage.get_task(None, &id).ok_or((
+    let old_task = state.storage.get_task(identity.tenant_id(), &id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
 
-    match state.storage.update_task(None, &id, &input) {
+    match state.storage.update_task(identity.tenant_id(), &id, &input) {
         Ok(Some(task)) => {
             if let Some(ref new_status) = input.status {
                 if *new_status != old_task.status {
                     state.storage.create_activity(
-                        None,
+                        identity.tenant_id(),
                         &id,
                         identity.author_type(),
                         identity.author_id(),
@@ -121,7 +128,9 @@ pub async fn update_task(
 
                     if let Some(event_type) = event_type {
                         let unblock_pending = if new_status == "done" {
-                            state.storage.unblock_dependents_on_complete(None, &task.id)
+                            state
+                                .storage
+                                .unblock_dependents_on_complete(identity.tenant_id(), &task.id)
                         } else {
                             vec![]
                         };
@@ -180,10 +189,10 @@ pub async fn update_task(
 
 pub async fn delete_task(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.delete_task(None, &id) {
+    if state.storage.delete_task(identity.tenant_id(), &id) {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -199,7 +208,11 @@ pub async fn my_tasks(State(state): State<AppState>, identity: Identity) -> Json
     let Identity::AgentIdentity { id, .. } = &identity else {
         return Json(vec![]);
     };
-    Json(state.storage.get_tasks_for_assignee(None, id))
+    Json(
+        state
+            .storage
+            .get_tasks_for_assignee(identity.tenant_id(), id),
+    )
 }
 
 pub async fn update_context(
@@ -208,10 +221,13 @@ pub async fn update_context(
     Path(id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.merge_context(None, &id, &patch) {
+    match state
+        .storage
+        .merge_context(identity.tenant_id(), &id, &patch)
+    {
         Ok(Some(task)) => {
             state.storage.create_activity(
-                None,
+                identity.tenant_id(),
                 &id,
                 identity.author_type(),
                 identity.author_id(),
@@ -249,9 +265,12 @@ pub async fn claim_task(
         }
     };
 
-    match state.storage.claim_task(None, &id, &agent_id, &agent_name) {
+    match state
+        .storage
+        .claim_task(identity.tenant_id(), &id, &agent_id, &agent_name)
+    {
         Ok(mut task) => {
-            task.activities = state.storage.list_activity(None, &task.id);
+            task.activities = state.storage.list_activity(identity.tenant_id(), &task.id);
             let mut pending = events::emit_task_event(
                 &*state.storage,
                 &state.event_bus,
@@ -289,7 +308,10 @@ pub async fn release_task(
     identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.release_task(None, &id, identity.author_id()) {
+    match state
+        .storage
+        .release_task(identity.tenant_id(), &id, identity.author_id())
+    {
         Ok(task) => {
             state.event_bus.emit(Event {
                 event_type: "task.released".to_string(),
@@ -313,7 +335,7 @@ pub async fn complete_task(
     Path(id): Path<String>,
     Json(input): Json<CompleteRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    let task = state.storage.get_task(None, &id).ok_or((
+    let task = state.storage.get_task(identity.tenant_id(), &id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "Task not found"})),
     ))?;
@@ -333,7 +355,7 @@ pub async fn complete_task(
     }
 
     match state.storage.update_task(
-        None,
+        identity.tenant_id(),
         &id,
         &UpdateTask {
             title: None,
@@ -355,7 +377,7 @@ pub async fn complete_task(
         Ok(Some(task)) => {
             let summary = input.summary.as_deref().unwrap_or("Task completed");
             state.storage.create_activity(
-                None,
+                identity.tenant_id(),
                 &id,
                 identity.author_type(),
                 identity.author_id(),
@@ -365,10 +387,16 @@ pub async fn complete_task(
                     metadata: None,
                 },
             );
-            state.storage.inject_upstream_outputs(None, &task);
-            let mut pending = state.storage.unblock_dependents_on_complete(None, &task.id);
+            state
+                .storage
+                .inject_upstream_outputs(identity.tenant_id(), &task);
+            let mut pending = state
+                .storage
+                .unblock_dependents_on_complete(identity.tenant_id(), &task.id);
             if task.recurrence_rule.is_some() {
-                state.storage.create_next_recurrence(None, &task);
+                state
+                    .storage
+                    .create_next_recurrence(identity.tenant_id(), &task);
             }
             pending.extend(events::emit_task_event(
                 &*state.storage,
@@ -401,7 +429,7 @@ pub async fn block_task(
     Json(input): Json<BlockRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     match state.storage.update_task(
-        None,
+        identity.tenant_id(),
         &id,
         &UpdateTask {
             title: None,
@@ -423,7 +451,7 @@ pub async fn block_task(
         Ok(Some(task)) => {
             let reason = input.reason.as_deref().unwrap_or("Blocked");
             state.storage.create_activity(
-                None,
+                identity.tenant_id(),
                 &id,
                 identity.author_type(),
                 identity.author_id(),
@@ -458,7 +486,7 @@ pub async fn block_task(
 
 pub async fn next_task(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Query(query): Query<NextTaskQuery>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let skills: Vec<String> = query
@@ -469,7 +497,7 @@ pub async fn next_task(
         .map(|s| s.trim().to_string())
         .collect();
 
-    match state.storage.get_next_task(None, &skills) {
+    match state.storage.get_next_task(identity.tenant_id(), &skills) {
         Some(task) => Ok(Json(task)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -480,7 +508,7 @@ pub async fn next_task(
 
 pub async fn batch_status(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Json(input): Json<BatchStatusUpdate>,
 ) -> Json<BatchResult> {
     let updates: Vec<(String, String)> = input
@@ -488,7 +516,11 @@ pub async fn batch_status(
         .into_iter()
         .map(|u| (u.task_id, u.status))
         .collect();
-    Json(state.storage.batch_update_status(None, &updates))
+    Json(
+        state
+            .storage
+            .batch_update_status(identity.tenant_id(), &updates),
+    )
 }
 
 // --- v2: Assignment ---
@@ -499,10 +531,13 @@ pub async fn assign_task(
     Path(id): Path<String>,
     Json(input): Json<AssignRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.assign_task(None, &id, &input.agent_id) {
+    match state
+        .storage
+        .assign_task(identity.tenant_id(), &id, &input.agent_id)
+    {
         Ok(task) => {
             state.storage.create_activity(
-                None,
+                identity.tenant_id(),
                 &id,
                 identity.author_type(),
                 identity.author_id(),
@@ -511,7 +546,7 @@ pub async fn assign_task(
                         "Task manually assigned to agent:{}",
                         state
                             .storage
-                            .get_agent(None, &input.agent_id)
+                            .get_agent(identity.tenant_id(), &input.agent_id)
                             .map(|a| a.name)
                             .unwrap_or_else(|| input.agent_id.clone())
                     ),
@@ -549,7 +584,7 @@ pub async fn handoff_task(
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let from_id = identity.author_id().to_string();
     match state.storage.handoff_task(
-        None,
+        identity.tenant_id(),
         &id,
         &from_id,
         &input.to_agent_id,
@@ -581,15 +616,23 @@ pub async fn approve_task(
     Path(id): Path<String>,
     Json(input): Json<ApproveRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state
-        .storage
-        .approve_task(None, &id, identity.author_id(), input.comment.as_deref())
-    {
+    match state.storage.approve_task(
+        identity.tenant_id(),
+        &id,
+        identity.author_id(),
+        input.comment.as_deref(),
+    ) {
         Ok(task) => {
-            state.storage.inject_upstream_outputs(None, &task);
-            let mut pending = state.storage.unblock_dependents_on_complete(None, &task.id);
+            state
+                .storage
+                .inject_upstream_outputs(identity.tenant_id(), &task);
+            let mut pending = state
+                .storage
+                .unblock_dependents_on_complete(identity.tenant_id(), &task.id);
             if task.recurrence_rule.is_some() {
-                state.storage.create_next_recurrence(None, &task);
+                state
+                    .storage
+                    .create_next_recurrence(identity.tenant_id(), &task);
             }
             pending.extend(events::emit_task_event(
                 &*state.storage,
@@ -619,10 +662,12 @@ pub async fn request_changes(
     Path(id): Path<String>,
     Json(input): Json<RequestChangesRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state
-        .storage
-        .request_changes(None, &id, identity.author_id(), &input.comment)
-    {
+    match state.storage.request_changes(
+        identity.tenant_id(),
+        &id,
+        identity.author_id(),
+        &input.comment,
+    ) {
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
@@ -654,7 +699,7 @@ pub async fn submit_review(
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let submitter_id = identity.author_id().to_string();
     match state.storage.submit_review_task(
-        None,
+        identity.tenant_id(),
         &id,
         &submitter_id,
         input.summary.as_deref(),
@@ -688,10 +733,12 @@ pub async fn start_review(
     identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    match state
-        .storage
-        .start_review_task(None, &id, identity.author_id(), identity.author_type())
-    {
+    match state.storage.start_review_task(
+        identity.tenant_id(),
+        &id,
+        identity.author_id(),
+        identity.author_type(),
+    ) {
         Ok(task) => {
             let pending = events::emit_task_event(
                 &*state.storage,
@@ -721,33 +768,41 @@ pub async fn start_review(
 
 pub async fn add_dependencies(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
     Json(input): Json<AddDependenciesRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &id).is_none() {
+    if state.storage.get_task(identity.tenant_id(), &id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
     for dep_id in &input.depends_on {
-        if let Err(e) = state.storage.add_dependency(None, &id, dep_id) {
+        if let Err(e) = state
+            .storage
+            .add_dependency(identity.tenant_id(), &id, dep_id)
+        {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": e.0})),
             ));
         }
     }
-    Ok(Json(state.storage.get_task(None, &id).unwrap()))
+    Ok(Json(
+        state.storage.get_task(identity.tenant_id(), &id).unwrap(),
+    ))
 }
 
 pub async fn remove_dependency(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path((id, dep_id)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.remove_dependency(None, &id, &dep_id) {
+    if state
+        .storage
+        .remove_dependency(identity.tenant_id(), &id, &dep_id)
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -759,36 +814,44 @@ pub async fn remove_dependency(
 
 pub async fn list_dependencies(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Task>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &id).is_none() {
+    if state.storage.get_task(identity.tenant_id(), &id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
-    Ok(Json(state.storage.get_task_dependencies(None, &id)))
+    Ok(Json(
+        state
+            .storage
+            .get_task_dependencies(identity.tenant_id(), &id),
+    ))
 }
 
 pub async fn list_dependents(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Task>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &id).is_none() {
+    if state.storage.get_task(identity.tenant_id(), &id).is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
-    Ok(Json(state.storage.get_task_dependents(None, &id)))
+    Ok(Json(
+        state.storage.get_task_dependents(identity.tenant_id(), &id),
+    ))
 }
 
 pub async fn trigger_scheduled_transition(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
 ) -> Json<serde_json::Value> {
-    let count = state.storage.transition_ready_scheduled_tasks(None);
+    let count = state
+        .storage
+        .transition_ready_scheduled_tasks(identity.tenant_id());
     Json(serde_json::json!({"transitioned": count}))
 }

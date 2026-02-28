@@ -9,10 +9,10 @@ use opengate_models::*;
 
 pub async fn list_agents(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Query(query): Query<AgentQuery>,
 ) -> Json<Vec<Agent>> {
-    let mut agents = state.storage.list_agents(None);
+    let mut agents = state.storage.list_agents(identity.tenant_id());
 
     if let Some(ref cap) = query.capability {
         agents.retain(|agent| {
@@ -32,7 +32,7 @@ pub async fn list_agents(
 
 pub async fn match_best_agent(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Query(query): Query<AgentMatchQuery>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
     let capabilities: Option<Vec<String>> = query.capability.map(|c| {
@@ -50,8 +50,11 @@ pub async fn match_best_agent(
         agent_id: None,
     };
 
-    match state.storage.find_best_agent(None, &strategy) {
-        Some(agent_id) => match state.storage.get_agent(None, &agent_id) {
+    match state
+        .storage
+        .find_best_agent(identity.tenant_id(), &strategy)
+    {
+        Some(agent_id) => match state.storage.get_agent(identity.tenant_id(), &agent_id) {
             Some(agent) => Ok(Json(agent)),
             None => Err((
                 StatusCode::NOT_FOUND,
@@ -67,10 +70,10 @@ pub async fn match_best_agent(
 
 pub async fn get_agent(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.get_agent(None, &id) {
+    match state.storage.get_agent(identity.tenant_id(), &id) {
         Some(agent) => Ok(Json(agent)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -81,11 +84,14 @@ pub async fn get_agent(
 
 pub async fn update_agent(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
     Json(input): Json<UpdateAgent>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    match state.storage.update_agent(None, &id, &input) {
+    match state
+        .storage
+        .update_agent(identity.tenant_id(), &id, &input)
+    {
         Some(agent) => Ok(Json(agent)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -108,7 +114,10 @@ pub async fn update_agent_self(
             ))
         }
     };
-    match state.storage.update_agent(None, &agent_id, &input) {
+    match state
+        .storage
+        .update_agent(identity.tenant_id(), &agent_id, &input)
+    {
         Some(agent) => Ok(Json(agent)),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -119,19 +128,19 @@ pub async fn update_agent_self(
 
 pub async fn create_agent(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Json(input): Json<CreateAgent>,
 ) -> Result<(StatusCode, Json<AgentCreated>), (StatusCode, Json<serde_json::Value>)> {
-    let (agent, api_key) = state.storage.create_agent(None, &input);
+    let (agent, api_key) = state.storage.create_agent(identity.tenant_id(), &input);
     Ok((StatusCode::CREATED, Json(AgentCreated { agent, api_key })))
 }
 
 pub async fn delete_agent(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.delete_agent(None, &id) {
+    if state.storage.delete_agent(identity.tenant_id(), &id) {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -155,7 +164,9 @@ pub async fn heartbeat(
         }
     };
 
-    state.storage.update_heartbeat(None, &agent_id);
+    state
+        .storage
+        .update_heartbeat(identity.tenant_id(), &agent_id);
     Ok(Json(serde_json::json!({"status": "ok"})))
 }
 
@@ -211,7 +222,7 @@ pub async fn my_notifications(
         }
     };
     Ok(Json(state.storage.list_notifications(
-        None,
+        identity.tenant_id(),
         &agent_id,
         query.unread,
     )))
@@ -231,7 +242,10 @@ pub async fn ack_notification(
             ))
         }
     };
-    if state.storage.ack_notification(None, &agent_id, id) {
+    if state
+        .storage
+        .ack_notification(identity.tenant_id(), &agent_id, id)
+    {
         Ok(Json(serde_json::json!({"ok": true})))
     } else {
         Err((
@@ -254,7 +268,11 @@ pub async fn inbox(
             ))
         }
     };
-    Ok(Json(state.storage.get_agent_inbox(None, &agent_id)))
+    Ok(Json(
+        state
+            .storage
+            .get_agent_inbox(identity.tenant_id(), &agent_id),
+    ))
 }
 
 pub async fn ack_all_notifications(
@@ -270,6 +288,8 @@ pub async fn ack_all_notifications(
             ))
         }
     };
-    let count = state.storage.ack_all_notifications(None, &agent_id);
+    let count = state
+        .storage
+        .ack_all_notifications(identity.tenant_id(), &agent_id);
     Ok(Json(serde_json::json!({"ok": true, "acknowledged": count})))
 }

@@ -37,13 +37,16 @@ pub async fn create_artifact(
         ));
     }
 
-    let task = state.storage.get_task(None, &task_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Task not found"})),
-    ))?;
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ))?;
 
     let artifact = state.storage.create_artifact(
-        None,
+        identity.tenant_id(),
         &task_id,
         &input,
         identity.author_type(),
@@ -57,7 +60,7 @@ pub async fn create_artifact(
         "artifact_type": artifact.artifact_type,
     });
     let pending = state.storage.emit_event(
-        None,
+        identity.tenant_id(),
         "task.artifact_created",
         Some(&task_id),
         &task.project_id,
@@ -72,17 +75,21 @@ pub async fn create_artifact(
 
 pub async fn list_artifacts(
     State(state): State<AppState>,
-    _identity: Identity,
+    identity: Identity,
     Path(task_id): Path<String>,
 ) -> Result<Json<Vec<TaskArtifact>>, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let artifacts = state.storage.list_artifacts(None, &task_id);
+    let artifacts = state.storage.list_artifacts(identity.tenant_id(), &task_id);
     Ok(Json(artifacts))
 }
 
@@ -91,17 +98,24 @@ pub async fn delete_artifact(
     identity: Identity,
     Path((task_id, artifact_id)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    if state.storage.get_task(None, &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
         ));
     }
 
-    let artifact = state.storage.get_artifact(None, &artifact_id).ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({"error": "Artifact not found"})),
-    ))?;
+    let artifact = state
+        .storage
+        .get_artifact(identity.tenant_id(), &artifact_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Artifact not found"})),
+        ))?;
 
     if artifact.task_id != task_id {
         return Err((
@@ -119,6 +133,8 @@ pub async fn delete_artifact(
         ));
     }
 
-    state.storage.delete_artifact(None, &artifact_id);
+    state
+        .storage
+        .delete_artifact(identity.tenant_id(), &artifact_id);
     Ok(StatusCode::NO_CONTENT)
 }
