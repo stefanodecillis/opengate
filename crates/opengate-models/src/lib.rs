@@ -450,9 +450,13 @@ pub struct NextTaskQuery {
 
 #[derive(Debug, Clone)]
 pub enum Identity {
+    /// An agent authenticated via API key. `tenant_id` mirrors the agent's `owner_id`
+    /// and is used for multi-tenant data isolation — agents only see data belonging to
+    /// their owner. `None` means single-tenant / OSS mode (no filtering).
     AgentIdentity {
         id: String,
         name: String,
+        tenant_id: Option<String>,
     },
     /// A human user. `tenant_id` is used for multi-tenant data isolation (e.g. in TaskForge).
     /// The OSS single-tenant engine ignores it; multi-tenant backends filter by it.
@@ -489,10 +493,13 @@ impl Identity {
     }
 
     /// Returns the tenant id for multi-tenant isolation, if available.
+    /// Agents carry their owner's tenant_id; humans carry their own.
+    /// Returns `None` in single-tenant (OSS) mode — no filtering applied.
     pub fn tenant_id(&self) -> Option<&str> {
         match self {
+            Identity::AgentIdentity { tenant_id, .. } => tenant_id.as_deref(),
             Identity::Human { tenant_id, .. } => tenant_id.as_deref(),
-            _ => None,
+            Identity::Anonymous => None,
         }
     }
 }

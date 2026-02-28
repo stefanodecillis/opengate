@@ -378,6 +378,19 @@ pub fn init_db(path: &str) -> Connection {
     let _ = conn.execute("ALTER TABLE projects ADD COLUMN repo_url TEXT", []);
     let _ = conn.execute("ALTER TABLE projects ADD COLUMN default_branch TEXT", []);
 
+    // v19: tenant isolation — owner_id on projects and tasks
+    // NULL = single-tenant OSS mode (no filtering); non-null = scoped to that owner.
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN owner_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE tasks ADD COLUMN owner_id TEXT", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_owner_id ON projects(owner_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_owner_id ON tasks(owner_id)",
+        [],
+    );
+
     conn
 }
 

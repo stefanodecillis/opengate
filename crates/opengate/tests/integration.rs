@@ -2435,6 +2435,7 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
     // Create project + task
     let project = db_ops::create_project(
         &conn,
+        None,
         &opengate_models::CreateProject {
             name: "Stale Q Project".to_string(),
             description: None,
@@ -2446,6 +2447,7 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
 
     let task = db_ops::create_task(
         &conn,
+        None,
         &project.id,
         &opengate_models::CreateTask {
             title: "Stale Q Task".to_string(),
@@ -2499,7 +2501,7 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
     );
 
     // Verify task is still in_progress
-    let task_after = db_ops::get_task(&conn, &task.id).unwrap();
+    let task_after = db_ops::get_task(&conn, None, &task.id).unwrap();
     assert_eq!(task_after.status, "in_progress");
     assert_eq!(task_after.assignee_id.as_deref(), Some(&*agent.id));
 }
@@ -3037,6 +3039,7 @@ async fn test_auto_target_zero_matches() {
 
     let project = db_ops::create_project(
         &conn,
+        None,
         &opengate_models::CreateProject {
             name: "AT0 Project".to_string(),
             description: None,
@@ -3047,6 +3050,7 @@ async fn test_auto_target_zero_matches() {
     );
     let task = db_ops::create_task(
         &conn,
+        None,
         &project.id,
         &opengate_models::CreateTask {
             title: "AT0 Task".to_string(),
@@ -3116,6 +3120,7 @@ async fn test_auto_target_single_exact_match() {
 
     let project = db_ops::create_project(
         &conn,
+        None,
         &opengate_models::CreateProject {
             name: "AT1 Project".to_string(),
             description: None,
@@ -3126,6 +3131,7 @@ async fn test_auto_target_single_exact_match() {
     );
     let task = db_ops::create_task(
         &conn,
+        None,
         &project.id,
         &opengate_models::CreateTask {
             title: "AT1 Task".to_string(),
@@ -3192,6 +3198,7 @@ async fn test_auto_target_multiple_matches() {
 
     let project = db_ops::create_project(
         &conn,
+        None,
         &opengate_models::CreateProject {
             name: "ATM Project".to_string(),
             description: None,
@@ -3202,6 +3209,7 @@ async fn test_auto_target_multiple_matches() {
     );
     let task = db_ops::create_task(
         &conn,
+        None,
         &project.id,
         &opengate_models::CreateTask {
             title: "ATM Task".to_string(),
@@ -4222,4 +4230,100 @@ async fn test_ws_unsubscribe() {
         no_event.is_none(),
         "should not receive events after unsubscribe"
     );
+}
+
+// ===== Tenant isolation tests =====
+
+#[test]
+fn test_tenant_isolation_projects() {
+    use opengate::db;
+    use opengate::db_ops;
+    use opengate_models::CreateProject;
+
+    let conn = db::init_db(":memory:");
+
+    let input_a = CreateProject {
+        name: "Tenant A Project".to_string(),
+        description: None,
+        repo_url: None,
+        default_branch: None,
+    };
+    let input_b = CreateProject {
+        name: "Tenant B Project".to_string(),
+        description: None,
+        repo_url: None,
+        default_branch: None,
+    };
+    let no_owner = CreateProject {
+        name: "No Owner Project".to_string(),
+        description: None,
+        repo_url: None,
+        default_branch: None,
+    };
+
+    // Create projects for different tenants
+    db_ops::create_project(&conn, Some("tenant_a"), &input_a, "creator");
+    db_ops::create_project(&conn, Some("tenant_b"), &input_b, "creator");
+    db_ops::create_project(&conn, None, &no_owner, "creator"); // OSS / no owner
+
+    // Tenant A sees only its project + unowned
+    let tenant_a_projects = db_ops::list_projects(&conn, Some("tenant_a"), None);
+    let names: Vec<&str> = tenant_a_projects.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"Tenant A Project"), "tenant_a should see its own project");
+    assert!(names.contains(&"No Owner Project"), "tenant_a should see unowned project");
+    assert!(!names.contains(&"Tenant B Project"), "tenant_a must NOT see tenant_b project");
+
+    // Tenant B sees only its project + unowned
+    let tenant_b_projects = db_ops::list_projects(&conn, Some("tenant_b"), None);
+    let names: Vec<&str> = tenant_b_projects.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"Tenant B Project"), "tenant_b should see its own project");
+    assert!(names.contains(&"No Owner Project"), "tenant_b should see unowned project");
+    assert!(!names.contains(&"Tenant A Project"), "tenant_b must NOT see tenant_a project");
+
+    // No tenant (OSS mode) sees all projects
+    let all = db_ops::list_projects(&conn, None, None);
+    assert_eq!(all.len(), 3, "OSS mode should see all 3 projects");
+}
+
+#[test]
+fn test_tenant_isolation_tasks() {
+    use opengate::db;
+    use opengate::db_ops;
+    use opengate_models::{CreateProject, CreateTask, TaskFilters};
+
+    let conn = db::init_db(":memory:");
+
+    let proj_a = db_ops::create_project(&conn, Some("tenant_a"), &CreateProject {
+        name: "Project A".to_string(), description: None, repo_url: None, default_branch: None,
+    }, "sys");
+    let proj_b = db_ops::create_project(&conn, Some("tenant_b"), &CreateProject {
+        name: "Project B".to_string(), description: None, repo_url: None, default_branch: None,
+    }, "sys");
+
+    db_ops::create_task(&conn, Some("tenant_a"), &proj_a.id, &CreateTask {
+        title: "Task A".to_string(), description: None, priority: None,
+        tags: None, context: None, output: None, due_date: None,
+        assignee_type: None, assignee_id: None, scheduled_at: None, recurrence_rule: None,
+    }, "sys");
+    db_ops::create_task(&conn, Some("tenant_b"), &proj_b.id, &CreateTask {
+        title: "Task B".to_string(), description: None, priority: None,
+        tags: None, context: None, output: None, due_date: None,
+        assignee_type: None, assignee_id: None, scheduled_at: None, recurrence_rule: None,
+    }, "sys");
+
+    let filters = TaskFilters { project_id: None, status: None, priority: None, assignee_id: None, tag: None };
+
+    let tasks_a = db_ops::list_tasks(&conn, Some("tenant_a"), &filters);
+    let titles_a: Vec<&str> = tasks_a.iter().map(|t| t.title.as_str()).collect();
+    assert!(titles_a.contains(&"Task A"), "tenant_a should see Task A");
+    assert!(!titles_a.contains(&"Task B"), "tenant_a must NOT see Task B");
+
+    let tasks_b = db_ops::list_tasks(&conn, Some("tenant_b"), &filters);
+    let titles_b: Vec<&str> = tasks_b.iter().map(|t| t.title.as_str()).collect();
+    assert!(titles_b.contains(&"Task B"), "tenant_b should see Task B");
+    assert!(!titles_b.contains(&"Task A"), "tenant_b must NOT see Task A");
+
+    // OSS mode — sees all
+    let all = db_ops::list_tasks(&conn, None, &filters);
+    assert_eq!(all.len(), 2, "OSS mode should see all tasks");
 }

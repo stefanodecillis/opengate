@@ -29,13 +29,13 @@ impl ProjectStore for SqliteBackend {
         input: &CreateProject,
         created_by: &str,
     ) -> Project {
-        db_ops::create_project(&self.lock(), input, created_by)
+        db_ops::create_project(&self.lock(), _tenant, input, created_by)
     }
     fn get_project(&self, _tenant: Option<&str>, id: &str) -> Option<Project> {
-        db_ops::get_project(&self.lock(), id)
+        db_ops::get_project(&self.lock(), _tenant, id)
     }
     fn list_projects(&self, _tenant: Option<&str>, status_filter: Option<&str>) -> Vec<Project> {
-        db_ops::list_projects(&self.lock(), status_filter)
+        db_ops::list_projects(&self.lock(), _tenant, status_filter)
     }
     fn update_project(
         &self,
@@ -78,13 +78,13 @@ impl TaskStore for SqliteBackend {
         input: &CreateTask,
         created_by: &str,
     ) -> Task {
-        db_ops::create_task(&self.lock(), project_id, input, created_by)
+        db_ops::create_task(&self.lock(), _tenant, project_id, input, created_by)
     }
     fn get_task(&self, _tenant: Option<&str>, id: &str) -> Option<Task> {
-        db_ops::get_task(&self.lock(), id)
+        db_ops::get_task(&self.lock(), _tenant, id)
     }
     fn list_tasks(&self, _tenant: Option<&str>, filters: &TaskFilters) -> Vec<Task> {
-        db_ops::list_tasks(&self.lock(), filters)
+        db_ops::list_tasks(&self.lock(), _tenant, filters)
     }
     fn update_task(
         &self,

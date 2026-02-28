@@ -256,7 +256,7 @@ pub async fn claim_task(
     Path(id): Path<String>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let (agent_id, agent_name) = match &identity {
-        Identity::AgentIdentity { id, name } => (id.clone(), name.clone()),
+        Identity::AgentIdentity { id, name, .. } => (id.clone(), name.clone()),
         Identity::Human { .. } | Identity::Anonymous => {
             return Err((
                 StatusCode::UNAUTHORIZED,
