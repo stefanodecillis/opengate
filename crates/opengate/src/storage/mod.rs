@@ -249,7 +249,12 @@ pub trait ArtifactStore: Send + Sync {
     fn list_artifacts(&self, tenant: Option<&str>, task_id: &str) -> Vec<TaskArtifact>;
     fn get_artifact(&self, tenant: Option<&str>, artifact_id: &str) -> Option<TaskArtifact>;
     fn delete_artifact(&self, tenant: Option<&str>, artifact_id: &str) -> bool;
-    fn update_artifact(&self, tenant: Option<&str>, artifact_id: &str, input: &UpdateArtifact) -> Option<TaskArtifact>;
+    fn update_artifact(
+        &self,
+        tenant: Option<&str>,
+        artifact_id: &str,
+        input: &UpdateArtifact,
+    ) -> Option<TaskArtifact>;
 }
 
 pub trait QuestionStore: Send + Sync {

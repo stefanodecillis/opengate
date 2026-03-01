@@ -1160,10 +1160,22 @@ fn call_ack_notification(ctx: &McpContext, args: &Value) -> Result<Value, String
 }
 
 fn call_create_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String> {
-    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
-    let name = args.get("name").and_then(|v| v.as_str()).ok_or("Missing 'name'")?;
-    let artifact_type = args.get("artifact_type").and_then(|v| v.as_str()).ok_or("Missing 'artifact_type'")?;
-    let value = args.get("value").and_then(|v| v.as_str()).ok_or("Missing 'value'")?;
+    let task_id = args
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'task_id'")?;
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'name'")?;
+    let artifact_type = args
+        .get("artifact_type")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'artifact_type'")?;
+    let value = args
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'value'")?;
 
     if !VALID_ARTIFACT_TYPES.contains(&artifact_type) {
         return Err(format!(
@@ -1174,7 +1186,9 @@ fn call_create_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String>
     }
 
     if (artifact_type == "text" || artifact_type == "json") && value.len() > 65536 {
-        return Err("Value exceeds maximum length of 65536 for text/json artifact types".to_string());
+        return Err(
+            "Value exceeds maximum length of 65536 for text/json artifact types".to_string(),
+        );
     }
 
     db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
@@ -1191,7 +1205,10 @@ fn call_create_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String>
 }
 
 fn call_list_artifacts(ctx: &McpContext, args: &Value) -> Result<Value, String> {
-    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
+    let task_id = args
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'task_id'")?;
 
     db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
         .ok_or_else(|| "Task not found".to_string())?;
@@ -1201,8 +1218,14 @@ fn call_list_artifacts(ctx: &McpContext, args: &Value) -> Result<Value, String> 
 }
 
 fn call_delete_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String> {
-    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
-    let artifact_id = args.get("artifact_id").and_then(|v| v.as_str()).ok_or("Missing 'artifact_id'")?;
+    let task_id = args
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'task_id'")?;
+    let artifact_id = args
+        .get("artifact_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'artifact_id'")?;
 
     db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
         .ok_or_else(|| "Task not found".to_string())?;

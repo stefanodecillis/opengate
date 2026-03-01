@@ -148,11 +148,17 @@ pub async fn update_artifact(
     if input.name.is_none() && input.value.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "At least one of 'name' or 'value' must be provided"})),
+            Json(
+                serde_json::json!({"error": "At least one of 'name' or 'value' must be provided"}),
+            ),
         ));
     }
 
-    if state.storage.get_task(identity.tenant_id(), &task_id).is_none() {
+    if state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .is_none()
+    {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Task not found"})),
@@ -185,10 +191,14 @@ pub async fn update_artifact(
 
     // Validate new value length if provided
     if let Some(ref value) = input.value {
-        if (artifact.artifact_type == "text" || artifact.artifact_type == "json") && value.len() > 65536 {
+        if (artifact.artifact_type == "text" || artifact.artifact_type == "json")
+            && value.len() > 65536
+        {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "Value exceeds maximum length of 65536 for text/json artifact types"})),
+                Json(
+                    serde_json::json!({"error": "Value exceeds maximum length of 65536 for text/json artifact types"}),
+                ),
             ));
         }
     }
@@ -201,7 +211,10 @@ pub async fn update_artifact(
             Json(serde_json::json!({"error": "Artifact not found"})),
         ))?;
 
-    let task = state.storage.get_task(identity.tenant_id(), &task_id).unwrap();
+    let task = state
+        .storage
+        .get_task(identity.tenant_id(), &task_id)
+        .unwrap();
     let payload = serde_json::json!({
         "task_title": task.title,
         "actor_name": identity.display_name(),
