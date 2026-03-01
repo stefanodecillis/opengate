@@ -2,7 +2,7 @@
   "id": "opengate",
   "name": "OpenGate",
   "description": "Polls OpenGate for assigned tasks and spawns isolated OpenClaw sessions to execute them. Turns OpenGate into the orchestrator.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "skills": ["./skills/opengate"],
   "configSchema": {
     "type": "object",
