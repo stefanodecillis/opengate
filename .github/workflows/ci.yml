@@ -33,3 +33,27 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  packages:
+    name: Build packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build @opengate/mcp
+        run: cd packages/mcp && bun install && bun run build
+
+      - name: Build @opengate/setup
+        run: cd packages/setup && bun install && bun run build
+
+      - name: Type-check @opengate/setup
+        run: cd packages/setup && npx tsc --noEmit
+
+      - name: Build @opengate/openclaw
+        run: cd packages/openclaw-plugin && bun install && bun run build

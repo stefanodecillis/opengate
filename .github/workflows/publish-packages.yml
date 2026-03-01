@@ -1,0 +1,33 @@
+name: Publish Packages
+
+on:
+  push:
+    tags: ['packages-v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish @opengate/mcp
+        run: cd packages/mcp && bun install && bun run build && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
+
+      - name: Publish @opengate/setup
+        run: cd packages/setup && bun install && bun run build && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
+
+      - name: Publish @opengate/openclaw
+        run: cd packages/openclaw-plugin && bun install && bun run build && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
