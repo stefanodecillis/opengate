@@ -1,0 +1,46 @@
+{
+  "id": "openclaw",
+  "name": "OpenGate",
+  "description": "Real-time push notifications from OpenGate to agents via HTTP polling or WebSocket",
+  "version": "0.1.2",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "OpenGate server URL",
+        "default": "https://opengate.sh"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "Agent API key (tf_... format)"
+      },
+      "mode": {
+        "type": "string",
+        "description": "Notification mode: 'polling' (default) or 'websocket'",
+        "enum": [
+          "polling",
+          "websocket"
+        ],
+        "default": "polling"
+      },
+      "pollIntervalMs": {
+        "type": "number",
+        "description": "Polling interval in milliseconds (only used in polling mode)",
+        "default": 600000
+      },
+      "projectId": {
+        "type": "string",
+        "description": "Optional project ID to filter notifications"
+      }
+    },
+    "required": [
+      "url",
+      "apiKey"
+    ]
+  },
+  "skills": [
+    "skills/opengate"
+  ]
+}

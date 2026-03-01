@@ -5,3 +5,9 @@
 *.log
 .agent-keys
 bridge/bridge.toml
+
+# JS packages
+node_modules/
+packages/*/node_modules/
+packages/*/dist/
+packages/*/bun.lock

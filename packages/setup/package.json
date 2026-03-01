@@ -1,0 +1,31 @@
+{
+  "name": "@opengate/setup",
+  "version": "0.1.4",
+  "description": "Interactive CLI installer for OpenGate agents",
+  "type": "module",
+  "bin": {
+    "opengate-setup": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

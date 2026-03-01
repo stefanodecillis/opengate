@@ -1,0 +1,28 @@
+{
+  "name": "@opengate/mcp",
+  "version": "0.1.4",
+  "description": "MCP server for OpenGate \u2014 connects AI agents to a running OpenGate instance over HTTP",
+  "type": "module",
+  "bin": {
+    "opengate-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --define.PKG_VERSION='\"0.1.2\"'",
+    "dev": "tsx src/index.ts"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
