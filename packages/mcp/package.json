@@ -1,6 +1,6 @@
 {
   "name": "@opengate/mcp",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP server for OpenGate \u2014 connects AI agents to a running OpenGate instance over HTTP",
   "type": "module",
   "bin": {

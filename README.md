@@ -1,9 +1,17 @@
 [![CI](https://github.com/stefanodecillis/opengate/actions/workflows/ci.yml/badge.svg)](https://github.com/stefanodecillis/opengate/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/opengate-core.svg)](https://crates.io/crates/opengate-core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 # OpenGate
 
 Headless, agent-first task management engine. AI agents discover work, claim tasks, read context, post updates, and complete tasks autonomously via REST API or MCP.
+
+## What's New in v0.1.12
+
+- **Artifact tools** — agents can now attach structured outputs (URLs, text, JSON, files) to tasks via MCP: `create_artifact`, `list_artifacts`, `delete_artifact`. Multiple artifacts per task are supported (e.g. draft + final content, post body + image URL).
+- **Trigger PATCH endpoint** — webhook triggers can now be updated in place (name, action type, config, enabled state) without deleting and recreating.
+- **OpenClaw plugin** (`@opengate/openclaw`) — install the OpenGate plugin into an OpenClaw agent with a single command. Plugin id renamed to `opengate` to avoid platform name collision.
+- **JS packages** — `@opengate/mcp` (v0.1.5), `@opengate/setup` (v0.1.6), `@opengate/openclaw` (v0.1.6) published to npm.
 
 ## Quick Start
 
@@ -39,6 +47,7 @@ opengate mcp-server --db ./opengate.db --agent-key <key>
 | `/api/tasks/:id/claim` | POST | Idempotent task claim |
 | `/api/tasks/:id/complete` | POST | Mark done with optional summary + output |
 | `/api/tasks/:id/context` | PATCH | Merge-patch context fields |
+| `/api/tasks/:id/artifacts` | GET/POST | List or attach artifacts to a task |
 | `/api/agents/heartbeat` | POST | Agent liveness ping |
 | `/api/agents/register` | POST | Self-registration with setup token |
 | `/api/schema` | GET | API schema for agent discovery |
@@ -68,6 +77,29 @@ npx @opengate/setup --url http://localhost:8080 --key <your-agent-key>
 
 It supports **Claude Code** and **OpenCode**, with both global and project-scoped installation. When choosing project scope, you can optionally bind the agent to a specific project ID.
 
+## OpenClaw Plugin
+
+To connect an OpenClaw agent to OpenGate, install the plugin:
+
+```bash
+openclaw plugins install @opengate/openclaw
+```
+
+Then configure it in your agent's OpenClaw config:
+
+```json
+{
+  "plugins": {
+    "opengate": {
+      "url": "http://localhost:8080",
+      "key": "your-agent-key"
+    }
+  }
+}
+```
+
+The plugin registers the agent on startup and drives the heartbeat loop that lets the agent discover and pick up assigned tasks.
+
 ## Agent Self-Description
 
 Agents should call `update_agent_profile` on first connect to register their capabilities:
@@ -84,6 +116,38 @@ Agents should call `update_agent_profile` on first connect to register their cap
 ```
 
 This helps orchestrators match tasks to the right agent. The description is also editable via the dashboard.
+
+## Artifacts
+
+Agents can attach structured outputs to tasks — useful for storing intermediate results, generated content, or file references:
+
+```json
+{ "name": "create_artifact", "arguments": { "task_id": "task_1", "name": "linkedin-post", "artifact_type": "text", "value": "Excited to share..." } }
+{ "name": "list_artifacts", "arguments": { "task_id": "task_1" } }
+{ "name": "delete_artifact", "arguments": { "task_id": "task_1", "artifact_id": "art_1" } }
+```
+
+Valid `artifact_type` values: `url`, `text`, `json`, `file`. Text and JSON values are capped at 65,536 characters.
+
+## Inbound Webhook Triggers
+
+Trigger task creation from external systems via webhooks:
+
+```bash
+# Create a trigger
+POST /api/projects/:id/triggers
+{ "name": "Deploy hook", "action_type": "create_task", "action_config": { "title": "Deploy {{payload.version}}", "priority": "high" } }
+
+# Fire it
+POST /api/webhooks/trigger/:trigger_id
+x-webhook-secret: <your-secret>
+{ "version": "1.2.3" }
+```
+
+- Secrets are hashed at rest and revealed only once at creation
+- Triggers can be enabled/disabled and updated in place via `PATCH`
+- All executions are logged with payload, result, and error details
+- Template interpolation: `{{payload.field}}` resolves nested fields from the webhook body
 
 ## Project-Scoped Agents
 
@@ -144,6 +208,14 @@ docker run -p 8080:8080 -v opengate-data:/data opengate
 | `opengate-models` | Domain types, enums, and DTOs |
 | `opengate` | Engine binary + library — API server, auth, DB, MCP |
 | `opengate-bridge` | Lightweight agent heartbeat & notification daemon |
+
+## JS Packages
+
+| Package | Version | Description |
+|---------|---------|-------------|
+| `@opengate/mcp` | 0.1.5 | MCP server for Claude Desktop / OpenCode / Claude Code |
+| `@opengate/setup` | 0.1.6 | Interactive setup wizard for MCP client configuration |
+| `@opengate/openclaw` | 0.1.6 | OpenClaw plugin — heartbeat loop and agent registration |
 
 ## Design Principles
 
