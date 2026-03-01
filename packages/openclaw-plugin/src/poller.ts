@@ -1,41 +1,64 @@
-/**
- * HTTP polling client for OpenGate notifications.
- * Polls GET /api/agents/me/notifications?unread=true at a configurable interval.
- */
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { PluginLogger } from "openclaw/plugin-sdk";
+import type { OpenGatePluginConfig } from "./config.js";
+import { buildBootstrapPrompt } from "./bootstrap.js";
+import { spawnTaskSession } from "./spawner.js";
+import { TaskState } from "./state.js";
 
-import type { Notification } from "./message-formatter.js";
+type OpenGateTask = {
+  id: string;
+  title: string;
+  description?: string | null;
+  tags?: string[];
+  priority?: string;
+  project_id?: string;
+  status?: string;
+  context?: Record<string, unknown>;
+};
 
-export interface PollerConfig {
-  url: string;
-  apiKey: string;
-  pollIntervalMs: number;
-  projectId?: string;
+type InboxResponse = {
+  todo?: OpenGateTask[];
+  in_progress?: OpenGateTask[];
+};
+
+async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> {
+  const resp = await fetch(`${url}/api/agents/me/inbox`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`OpenGate inbox returned HTTP ${resp.status}`);
+  }
+
+  const body = (await resp.json()) as InboxResponse;
+  return body.todo ?? [];
 }
 
-export type NotificationHandler = (notifications: Notification[]) => void;
-
-export class Poller {
-  private config: PollerConfig;
-  private handler: NotificationHandler;
+export class OpenGatePoller {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private state: TaskState;
   private running = false;
 
-  constructor(config: PollerConfig, handler: NotificationHandler) {
-    this.config = config;
-    this.handler = handler;
+  constructor(
+    private pluginCfg: OpenGatePluginConfig,
+    private openclawCfg: OpenClawConfig,
+    private logger: PluginLogger,
+    stateDir: string,
+  ) {
+    this.state = new TaskState(stateDir);
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
 
-    // Poll immediately on start
-    void this.poll();
+    const intervalMs = this.pluginCfg.pollIntervalMs ?? 30_000;
+    this.logger.info(`[opengate] Starting poller — interval: ${intervalMs}ms`);
 
-    // Then poll at the configured interval
-    this.timer = setInterval(() => {
-      void this.poll();
-    }, this.config.pollIntervalMs);
+    // Run immediately, then on interval
+    void this.poll();
+    this.timer = setInterval(() => void this.poll(), intervalMs);
   }
 
   stop(): void {
@@ -44,66 +67,76 @@ export class Poller {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.logger.info("[opengate] Poller stopped");
   }
 
   private async poll(): Promise<void> {
     if (!this.running) return;
 
-    try {
-      const baseUrl = this.config.url.replace(/\/$/, "");
-      const params = new URLSearchParams({ unread: "true" });
-      if (this.config.projectId) {
-        params.set("project_id", this.config.projectId);
-      }
+    const maxConcurrent = this.pluginCfg.maxConcurrent ?? 3;
+    const active = this.state.activeCount();
 
-      const response = await fetch(
-        `${baseUrl}/api/agents/me/notifications?${params.toString()}`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            "Content-Type": "application/json",
-          },
-        }
+    if (active >= maxConcurrent) {
+      this.logger.info(
+        `[opengate] At capacity (${active}/${maxConcurrent} active) — skipping poll`,
       );
+      return;
+    }
 
-      if (!response.ok) {
-        console.error(
-          `[opengate-bridge] Poll failed: ${response.status} ${response.statusText}`
+    let tasks: OpenGateTask[];
+    try {
+      tasks = await fetchInbox(this.pluginCfg.url, this.pluginCfg.apiKey);
+    } catch (e) {
+      this.logger.warn(
+        `[opengate] Failed to fetch inbox: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+
+    if (tasks.length === 0) return;
+
+    this.logger.info(`[opengate] Found ${tasks.length} todo task(s)`);
+
+    for (const task of tasks) {
+      if (!this.running) break;
+
+      const currentActive = this.state.activeCount();
+      if (currentActive >= maxConcurrent) {
+        this.logger.info(
+          `[opengate] Reached capacity (${currentActive}/${maxConcurrent}) — deferring remaining tasks`,
         );
-        return;
+        break;
       }
 
-      const notifications = (await response.json()) as Notification[];
-      if (notifications.length > 0) {
-        this.handler(notifications);
-
-        // Acknowledge notifications so they aren't returned again
-        await this.acknowledgeNotifications(
-          baseUrl,
-          notifications.map((n) => n.id)
-        );
+      if (this.state.isSpawned(task.id)) {
+        this.logger.info(`[opengate] Task ${task.id} already spawned — skipping`);
+        continue;
       }
-    } catch (err) {
-      console.error(`[opengate-bridge] Poll error:`, err);
+
+      await this.spawnTask(task);
     }
   }
 
-  private async acknowledgeNotifications(
-    baseUrl: string,
-    ids: string[]
-  ): Promise<void> {
-    try {
-      for (const id of ids) {
-        await fetch(`${baseUrl}/api/agents/me/notifications/${id}/ack`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            "Content-Type": "application/json",
-          },
-        });
-      }
-    } catch (err) {
-      console.error(`[opengate-bridge] Failed to acknowledge notifications:`, err);
+  private async spawnTask(task: OpenGateTask): Promise<void> {
+    this.logger.info(`[opengate] Spawning session for task: "${task.title}" (${task.id})`);
+
+    const prompt = buildBootstrapPrompt(task, this.pluginCfg.url, this.pluginCfg.apiKey);
+
+    const result = await spawnTaskSession(
+      task.id,
+      prompt,
+      this.pluginCfg,
+      this.openclawCfg,
+    );
+
+    if (!result.ok) {
+      this.logger.error(result.error);
+      return;
     }
+
+    this.state.markSpawned(task.id, result.sessionKey);
+    this.logger.info(
+      `[opengate] Session spawned for task ${task.id} → session key: ${result.sessionKey}`,
+    );
   }
 }

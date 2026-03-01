@@ -1,46 +1,46 @@
 {
   "id": "opengate",
   "name": "OpenGate",
-  "description": "Real-time push notifications from OpenGate to agents via HTTP polling or WebSocket",
-  "version": "0.1.8",
+  "description": "Polls OpenGate for assigned tasks and spawns isolated OpenClaw sessions to execute them. Turns OpenGate into the orchestrator.",
+  "version": "0.2.0",
+  "skills": ["./skills/opengate"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
+    "required": ["url", "apiKey"],
     "properties": {
       "url": {
         "type": "string",
-        "description": "OpenGate server URL",
-        "default": "https://opengate.sh"
+        "description": "OpenGate base URL (e.g. https://opengate.sh)"
       },
       "apiKey": {
         "type": "string",
-        "description": "Agent API key (tf_... format)"
+        "description": "Agent API key for OpenGate"
       },
-      "mode": {
+      "agentId": {
         "type": "string",
-        "description": "Notification mode: 'polling' (default) or 'websocket'",
-        "enum": [
-          "polling",
-          "websocket"
-        ],
-        "default": "polling"
+        "description": "OpenClaw agent ID to spawn sessions as (default: 'main')"
+      },
+      "model": {
+        "type": "string",
+        "description": "Model override for spawned task sessions (e.g. anthropic/claude-sonnet-4-6)"
       },
       "pollIntervalMs": {
         "type": "number",
-        "description": "Polling interval in milliseconds (only used in polling mode)",
-        "default": 600000
+        "description": "How often to poll OpenGate for tasks in milliseconds (default: 30000)"
       },
-      "projectId": {
-        "type": "string",
-        "description": "Optional project ID to filter notifications"
+      "maxConcurrent": {
+        "type": "number",
+        "description": "Max concurrent task sessions (default: 3)"
       }
-    },
-    "required": [
-      "url",
-      "apiKey"
-    ]
+    }
   },
-  "skills": [
-    "skills/opengate"
-  ]
+  "uiHints": {
+    "url": { "label": "OpenGate URL", "placeholder": "https://opengate.sh" },
+    "apiKey": { "label": "Agent API Key", "sensitive": true },
+    "agentId": { "label": "OpenClaw Agent ID", "placeholder": "main" },
+    "model": { "label": "Model Override", "placeholder": "anthropic/claude-sonnet-4-6" },
+    "pollIntervalMs": { "label": "Poll Interval (ms)", "advanced": true },
+    "maxConcurrent": { "label": "Max Concurrent Tasks", "advanced": true }
+  }
 }

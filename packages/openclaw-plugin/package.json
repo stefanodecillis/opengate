@@ -1,22 +1,19 @@
 {
   "name": "@opengate/openclaw",
-  "version": "0.1.8",
-  "description": "OpenClaw plugin for OpenGate \u2014 real-time agent notifications via HTTP polling or WebSocket",
+  "version": "0.2.0",
+  "description": "OpenGate task executor plugin for OpenClaw — polls assigned tasks and spawns isolated agent sessions",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts",
-    "dev": "tsup src/index.ts --format esm --dts --watch"
+    "build": "tsup src/index.ts --format esm --dts --external openclaw",
+    "dev": "tsup src/index.ts --format esm --dts --external openclaw --watch"
   },
-  "dependencies": {
-    "ws": "^8.18.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.0"
+    "@types/node": "^22.0.0"
   },
   "files": [
     "dist",
