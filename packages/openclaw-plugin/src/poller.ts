@@ -17,8 +17,8 @@ type OpenGateTask = {
 };
 
 type InboxResponse = {
-  todo?: OpenGateTask[];
-  in_progress?: OpenGateTask[];
+  todo_tasks?: OpenGateTask[];
+  in_progress_tasks?: OpenGateTask[];
 };
 
 async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> {
@@ -32,7 +32,7 @@ async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> 
   }
 
   const body = (await resp.json()) as InboxResponse;
-  return body.todo ?? [];
+  return body.todo_tasks ?? [];
 }
 
 export class OpenGatePoller {
