@@ -378,6 +378,32 @@ fn handle_tools_list() -> Result<Value, Value> {
                     "id": {"type": "integer", "description": "Notification ID to acknowledge. Omit to acknowledge all."}
                 }
             })),
+            // artifact tools
+            tool_def("create_artifact", "Attach an artifact to a task. Multiple artifacts per task are supported — call this repeatedly to add more (e.g. draft + final, post + image URL). Types: url, text, json, file. Text/json max 65536 chars.", json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID to attach the artifact to"},
+                    "name": {"type": "string", "description": "Human-readable artifact name (e.g. 'LinkedIn Post Draft', 'Final Copy', 'Image URL')"},
+                    "artifact_type": {"type": "string", "enum": ["url", "text", "json", "file"], "description": "Artifact type"},
+                    "value": {"type": "string", "description": "Artifact content (text/json up to 65536 chars; url/file store a URL or path)"}
+                },
+                "required": ["task_id", "name", "artifact_type", "value"]
+            })),
+            tool_def("list_artifacts", "List all artifacts attached to a task. Use this to see previously produced outputs (drafts, final versions, URLs, etc.).", json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID"}
+                },
+                "required": ["task_id"]
+            })),
+            tool_def("delete_artifact", "Delete an artifact by ID. Only the creator can delete their own artifacts.", json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID the artifact belongs to"},
+                    "artifact_id": {"type": "string", "description": "Artifact ID to delete"}
+                },
+                "required": ["task_id", "artifact_id"]
+            })),
         ]
     }))
 }
@@ -426,6 +452,9 @@ fn handle_tools_call(ctx: &McpContext, params: &Value) -> Result<Value, Value> {
         "list_knowledge" => call_list_knowledge(ctx, &args),
         "get_notifications" => call_get_notifications(ctx, &args),
         "ack_notification" => call_ack_notification(ctx, &args),
+        "create_artifact" => call_create_artifact(ctx, &args),
+        "list_artifacts" => call_list_artifacts(ctx, &args),
+        "delete_artifact" => call_delete_artifact(ctx, &args),
         _ => Err(format!("Unknown tool: {}", tool_name)),
     };
 
@@ -1128,4 +1157,67 @@ fn call_ack_notification(ctx: &McpContext, args: &Value) -> Result<Value, String
         let count = db_ops::ack_all_notifications(&ctx.conn, &ctx.agent_id);
         Ok(json!({"ok": true, "acknowledged": count}))
     }
+}
+
+fn call_create_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String> {
+    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
+    let name = args.get("name").and_then(|v| v.as_str()).ok_or("Missing 'name'")?;
+    let artifact_type = args.get("artifact_type").and_then(|v| v.as_str()).ok_or("Missing 'artifact_type'")?;
+    let value = args.get("value").and_then(|v| v.as_str()).ok_or("Missing 'value'")?;
+
+    if !VALID_ARTIFACT_TYPES.contains(&artifact_type) {
+        return Err(format!(
+            "Invalid artifact_type '{}'. Must be one of: {}",
+            artifact_type,
+            VALID_ARTIFACT_TYPES.join(", ")
+        ));
+    }
+
+    if (artifact_type == "text" || artifact_type == "json") && value.len() > 65536 {
+        return Err("Value exceeds maximum length of 65536 for text/json artifact types".to_string());
+    }
+
+    db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
+        .ok_or_else(|| "Task not found".to_string())?;
+
+    let input = CreateArtifact {
+        name: name.to_string(),
+        artifact_type: artifact_type.to_string(),
+        value: value.to_string(),
+    };
+
+    let artifact = db_ops::create_artifact(&ctx.conn, task_id, &input, "agent", &ctx.agent_id);
+    Ok(serde_json::to_value(&artifact).unwrap())
+}
+
+fn call_list_artifacts(ctx: &McpContext, args: &Value) -> Result<Value, String> {
+    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
+
+    db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
+        .ok_or_else(|| "Task not found".to_string())?;
+
+    let artifacts = db_ops::list_artifacts(&ctx.conn, task_id);
+    Ok(serde_json::to_value(&artifacts).unwrap())
+}
+
+fn call_delete_artifact(ctx: &McpContext, args: &Value) -> Result<Value, String> {
+    let task_id = args.get("task_id").and_then(|v| v.as_str()).ok_or("Missing 'task_id'")?;
+    let artifact_id = args.get("artifact_id").and_then(|v| v.as_str()).ok_or("Missing 'artifact_id'")?;
+
+    db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
+        .ok_or_else(|| "Task not found".to_string())?;
+
+    let artifact = db_ops::get_artifact(&ctx.conn, artifact_id)
+        .ok_or_else(|| "Artifact not found".to_string())?;
+
+    if artifact.task_id != task_id {
+        return Err("Artifact not found for this task".to_string());
+    }
+
+    if artifact.created_by_type != "agent" || artifact.created_by_id != ctx.agent_id {
+        return Err("Only the artifact creator can delete artifacts".to_string());
+    }
+
+    db_ops::delete_artifact(&ctx.conn, artifact_id);
+    Ok(json!({"ok": true, "deleted": artifact_id}))
 }

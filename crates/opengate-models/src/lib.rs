@@ -616,6 +616,14 @@ pub struct CreateArtifact {
     pub value: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateArtifact {
+    /// Optional new name for the artifact.
+    pub name: Option<String>,
+    /// Optional new value. artifact_type is immutable after creation.
+    pub value: Option<String>,
+}
+
 // --- Webhook Log ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

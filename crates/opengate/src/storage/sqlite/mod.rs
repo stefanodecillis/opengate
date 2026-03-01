@@ -387,6 +387,9 @@ impl ArtifactStore for SqliteBackend {
     fn delete_artifact(&self, _tenant: Option<&str>, artifact_id: &str) -> bool {
         db_ops::delete_artifact(&self.lock(), artifact_id)
     }
+    fn update_artifact(&self, _tenant: Option<&str>, artifact_id: &str, input: &UpdateArtifact) -> Option<TaskArtifact> {
+        db_ops::update_artifact(&self.lock(), artifact_id, input)
+    }
 }
 
 impl QuestionStore for SqliteBackend {
