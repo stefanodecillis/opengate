@@ -10,7 +10,7 @@
  * - Injects formatted messages into the agent's session via sessions.send()
  */
 
-const PKG_VERSION = '0.1.7'
+const PKG_VERSION = '0.1.8'
 
 import { Poller } from "./poller.js";
 import { WsClient } from "./ws-client.js";
@@ -65,7 +65,7 @@ async function checkForUpdate(): Promise<void> {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 600_000; // 10 minutes
-const SESSION_KEY = "agent:main:main";
+const SESSION_KEY = "main";
 
 /**
  * Plugin entry point. Called by OpenClaw when the plugin is loaded.
