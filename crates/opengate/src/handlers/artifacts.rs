@@ -138,3 +138,86 @@ pub async fn delete_artifact(
         .delete_artifact(identity.tenant_id(), &artifact_id);
     Ok(StatusCode::NO_CONTENT)
 }
+
+pub async fn update_artifact(
+    State(state): State<AppState>,
+    identity: Identity,
+    Path((task_id, artifact_id)): Path<(String, String)>,
+    Json(input): Json<UpdateArtifact>,
+) -> Result<Json<TaskArtifact>, (StatusCode, Json<serde_json::Value>)> {
+    if input.name.is_none() && input.value.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "At least one of 'name' or 'value' must be provided"})),
+        ));
+    }
+
+    if state.storage.get_task(identity.tenant_id(), &task_id).is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        ));
+    }
+
+    let artifact = state
+        .storage
+        .get_artifact(identity.tenant_id(), &artifact_id)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Artifact not found"})),
+        ))?;
+
+    if artifact.task_id != task_id {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Artifact not found for this task"})),
+        ));
+    }
+
+    let is_creator = artifact.created_by_type == identity.author_type()
+        && artifact.created_by_id == identity.author_id();
+    if !is_creator {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Only the artifact creator can update artifacts"})),
+        ));
+    }
+
+    // Validate new value length if provided
+    if let Some(ref value) = input.value {
+        if (artifact.artifact_type == "text" || artifact.artifact_type == "json") && value.len() > 65536 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Value exceeds maximum length of 65536 for text/json artifact types"})),
+            ));
+        }
+    }
+
+    let updated = state
+        .storage
+        .update_artifact(identity.tenant_id(), &artifact_id, &input)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Artifact not found"})),
+        ))?;
+
+    let task = state.storage.get_task(identity.tenant_id(), &task_id).unwrap();
+    let payload = serde_json::json!({
+        "task_title": task.title,
+        "actor_name": identity.display_name(),
+        "artifact_name": updated.name,
+        "artifact_type": updated.artifact_type,
+    });
+    let pending = state.storage.emit_event(
+        identity.tenant_id(),
+        "task.artifact_updated",
+        Some(&task_id),
+        &task.project_id,
+        identity.author_type(),
+        identity.author_id(),
+        &payload,
+    );
+    webhooks::fire_notification_webhooks(state.storage.clone(), pending);
+
+    Ok(Json(updated))
+}

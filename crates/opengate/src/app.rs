@@ -166,7 +166,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/tasks/:id/artifacts/:artifact_id",
-            delete(handlers::artifacts::delete_artifact),
+            patch(handlers::artifacts::update_artifact).delete(handlers::artifacts::delete_artifact),
         )
         // Agents
         .route(

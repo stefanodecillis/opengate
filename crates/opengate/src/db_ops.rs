@@ -3059,6 +3059,36 @@ pub fn get_artifact(conn: &Connection, artifact_id: &str) -> Option<TaskArtifact
     .ok()
 }
 
+pub fn update_artifact(
+    conn: &Connection,
+    artifact_id: &str,
+    input: &UpdateArtifact,
+) -> Option<TaskArtifact> {
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(name) = &input.name {
+        let _ = conn.execute(
+            "UPDATE task_artifacts SET name = ?1 WHERE id = ?2",
+            params![name, artifact_id],
+        );
+    }
+    if let Some(value) = &input.value {
+        let _ = conn.execute(
+            "UPDATE task_artifacts SET value = ?1 WHERE id = ?2",
+            params![value, artifact_id],
+        );
+    }
+    // touch updated_at if we had any changes
+    if input.name.is_some() || input.value.is_some() {
+        let _ = conn.execute(
+            "UPDATE task_artifacts SET created_at = created_at WHERE id = ?1",
+            params![artifact_id],
+        );
+        // SQLite has no updated_at on task_artifacts; we just re-fetch
+        let _ = now; // suppress unused warning
+    }
+    get_artifact(conn, artifact_id)
+}
+
 pub fn delete_artifact(conn: &Connection, artifact_id: &str) -> bool {
     let rows = conn
         .execute(
