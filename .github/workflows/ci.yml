@@ -53,7 +53,7 @@ jobs:
         run: cd packages/setup && bun install && bun run build
 
       - name: Type-check @opengate/setup
-        run: cd packages/setup && npx tsc --noEmit
+        run: cd packages/setup && bunx tsc --noEmit
 
       - name: Build @opengate/openclaw
         run: cd packages/openclaw-plugin && bun install && bun run build
