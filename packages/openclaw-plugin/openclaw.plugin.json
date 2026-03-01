@@ -1,5 +1,5 @@
 {
-  "id": "openclaw",
+  "id": "opengate",
   "name": "OpenGate",
   "description": "Real-time push notifications from OpenGate to agents via HTTP polling or WebSocket",
   "version": "0.1.2",

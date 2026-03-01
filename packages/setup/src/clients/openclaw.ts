@@ -33,9 +33,9 @@ export async function writeOpenClawConfig(
   const existingAllow: string[] = Array.isArray(existing?.plugins?.allow)
     ? existing.plugins.allow
     : []
-  const allow = existingAllow.includes('openclaw')
+  const allow = existingAllow.includes('opengate')
     ? existingAllow
-    : [...existingAllow, 'openclaw']
+    : [...existingAllow, 'opengate']
 
   const config: OpenClawConfig = {
     ...existing,
@@ -49,7 +49,7 @@ export async function writeOpenClawConfig(
       entries: {
         ...existing?.plugins?.entries,
         // Correctly nested: OpenClaw expects { enabled, config: { ... } }
-        openclaw: {
+        opengate: {
           enabled: true,
           config: pluginConfig,
         },
