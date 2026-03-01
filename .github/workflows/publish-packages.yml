@@ -18,16 +18,19 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Publish @opengate/mcp
+        continue-on-error: true
         run: cd packages/mcp && bun install && bun run build && npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
 
       - name: Publish @opengate/setup
+        continue-on-error: true
         run: cd packages/setup && bun install && bun run build && npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
 
       - name: Publish @opengate/openclaw
+        continue-on-error: true
         run: cd packages/openclaw-plugin && bun install && bun run build && npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
