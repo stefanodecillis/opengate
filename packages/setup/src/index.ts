@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as p from '@clack/prompts'
+import { execFileSync } from 'node:child_process'
 import { validateConnection, sendHeartbeat } from './api.js'
 import { askClient, askScope, askProjectId, askOpenClawConfigPath, askConnectionMode, askWorkspacePath } from './prompts.js'
 import { writeClaudeCodeConfig } from './clients/claude-code.js'
@@ -112,8 +113,15 @@ async function main() {
       hbSpinner.stop('Heartbeat failed (will retry automatically)')
     }
 
-    p.log.info('To enable push notifications, run: openclaw plugins install @opengate/openclaw')
-    p.log.info('Note: if openclaw.json had unrecognized keys from a previous setup, fix them first.')
+    const pluginSpinner = p.spinner()
+    pluginSpinner.start('Installing opengate plugin (latest)…')
+    try {
+      execFileSync('openclaw', ['plugins', 'install', 'opengate@latest'], { stdio: 'pipe' })
+      pluginSpinner.stop('Plugin installed (latest)')
+    } catch {
+      pluginSpinner.stop('Plugin auto-install failed')
+      p.log.warn('Run manually: openclaw plugins install opengate@latest')
+    }
     p.outro('Setup complete! Your agent is ready to receive tasks.')
     return
   }

@@ -1,6 +1,6 @@
 {
   "name": "@opengate/setup",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Interactive CLI installer for OpenGate agents",
   "type": "module",
   "bin": {

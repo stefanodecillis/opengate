@@ -944,7 +944,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opengate-bridge"
-version = "0.1.14"
+version = "0.1.12"
 dependencies = [
  "chrono",
  "clap",
@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "opengate-core"
-version = "0.1.14"
+version = "0.1.12"
 dependencies = [
  "async-trait",
  "axum",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "opengate-models"
-version = "0.1.14"
+version = "0.1.12"
 dependencies = [
  "serde",
  "serde_json",
