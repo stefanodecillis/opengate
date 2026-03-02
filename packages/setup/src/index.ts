@@ -2,7 +2,7 @@
 import * as p from '@clack/prompts'
 import { execFileSync } from 'node:child_process'
 import { validateConnection, sendHeartbeat } from './api.js'
-import { askClient, askScope, askProjectId, askOpenClawConfigPath, askConnectionMode, askWorkspacePath } from './prompts.js'
+import { askClient, askScope, askProjectId, askOpenClawConfigPath, askWorkspacePath } from './prompts.js'
 import { writeClaudeCodeConfig } from './clients/claude-code.js'
 import { writeOpenCodeConfig } from './clients/opencode.js'
 import { writeOpenClawConfig, writeHeartbeatMd } from './clients/openclaw.js'
@@ -67,14 +67,12 @@ async function main() {
   // OpenClaw has its own flow
   if (client === 'openclaw') {
     const configPath = await askOpenClawConfigPath()
-    const mode = await askConnectionMode()
-    const scopedProjectId = await askProjectId()
     const workspacePath = await askWorkspacePath()
 
     const configSpinner = p.spinner()
     configSpinner.start('Writing openclaw.json…')
     try {
-      const written = await writeOpenClawConfig(url, key, configPath, mode, scopedProjectId)
+      const written = await writeOpenClawConfig(url, key, configPath)
       configSpinner.stop(`Config written → ${written}`)
     } catch (err) {
       configSpinner.stop('Failed to write config')

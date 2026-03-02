@@ -1,7 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ConnectionMode } from '../prompts.js'
 import { readJsonSafe } from '../read-json.js'
 
 interface OpenClawHooks {
@@ -26,19 +25,17 @@ export async function writeOpenClawConfig(
   url: string,
   key: string,
   configPath: string,
-  mode: ConnectionMode,
-  projectId?: string,
 ): Promise<string> {
   // Read existing config (merge-safe)
   const existing = await readJsonSafe<OpenClawConfig>(configPath)
 
   // Plugin-specific config nested under .config (required by OpenClaw)
+  // Only include keys the openclaw-plugin schema accepts:
+  // url, apiKey, agentId, model, pollIntervalMs, maxConcurrent, projectsDir
   const pluginConfig: Record<string, unknown> = {
     url,
     apiKey: key,
-    mode,
   }
-  if (projectId) pluginConfig.projectId = projectId
 
   // Build allow list — ensure "opengate" is present
   const existingAllow: string[] = Array.isArray(existing?.plugins?.allow)
