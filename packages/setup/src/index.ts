@@ -69,6 +69,19 @@ async function main() {
     const configPath = await askOpenClawConfigPath()
     const workspacePath = await askWorkspacePath()
 
+    // Install plugin BEFORE writing config — openclaw validates config on
+    // every CLI invocation, and plugins.allow/entries referencing "opengate"
+    // will fail validation if the plugin files aren't on disk yet.
+    const pluginSpinner = p.spinner()
+    pluginSpinner.start('Installing opengate plugin (latest)…')
+    try {
+      execFileSync('openclaw', ['plugins', 'install', 'opengate@latest'], { stdio: 'pipe' })
+      pluginSpinner.stop('Plugin installed (latest)')
+    } catch {
+      pluginSpinner.stop('Plugin auto-install failed')
+      p.log.warn('Run manually: openclaw plugins install opengate@latest')
+    }
+
     const configSpinner = p.spinner()
     configSpinner.start('Writing openclaw.json…')
     try {
@@ -111,15 +124,6 @@ async function main() {
       hbSpinner.stop('Heartbeat failed (will retry automatically)')
     }
 
-    const pluginSpinner = p.spinner()
-    pluginSpinner.start('Installing opengate plugin (latest)…')
-    try {
-      execFileSync('openclaw', ['plugins', 'install', 'opengate@latest'], { stdio: 'pipe' })
-      pluginSpinner.stop('Plugin installed (latest)')
-    } catch {
-      pluginSpinner.stop('Plugin auto-install failed')
-      p.log.warn('Run manually: openclaw plugins install opengate@latest')
-    }
     p.outro('Setup complete! Your agent is ready to receive tasks.')
     return
   }

@@ -1,42 +1,51 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { resolveConfig } from "./config.js";
 import { OpenGatePoller } from "./poller.js";
 
-export default function register(api: OpenClawPluginApi): void {
-  let poller: OpenGatePoller | null = null;
+export default {
+  id: "opengate",
+  name: "OpenGate",
+  description:
+    "Polls OpenGate for assigned tasks and spawns isolated OpenClaw sessions to execute them. Turns OpenGate into the orchestrator.",
+  configSchema: emptyPluginConfigSchema(),
 
-  // Validate config early — log clear errors if misconfigured
-  let pluginCfg: ReturnType<typeof resolveConfig>;
-  try {
-    pluginCfg = resolveConfig(api.pluginConfig ?? {});
-  } catch (e) {
-    api.logger.error(e instanceof Error ? e.message : String(e));
-    return;
-  }
+  register(api: OpenClawPluginApi): void {
+    let poller: OpenGatePoller | null = null;
 
-  // Check hooks are enabled — required to spawn sessions
-  const hooksToken = (api.config as any)?.hooks?.token;
-  if (!hooksToken) {
-    api.logger.error(
-      "[opengate] hooks.token is not configured. " +
-      "Add the following to your OpenClaw config to enable task spawning:\n" +
-      '  "hooks": { "enabled": true, "token": "<your-secret>", ' +
-      '"allowRequestSessionKey": true, "allowedSessionKeyPrefixes": ["opengate-task:"] }',
-    );
-    return;
-  }
+    // Validate config early — log clear errors if misconfigured
+    let pluginCfg: ReturnType<typeof resolveConfig>;
+    try {
+      pluginCfg = resolveConfig(api.pluginConfig ?? {});
+    } catch (e) {
+      api.logger.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
 
-  api.registerService({
-    id: "opengate-poller",
+    // Check hooks are enabled — required to spawn sessions
+    const hooksToken = (api.config as any)?.hooks?.token;
+    if (!hooksToken) {
+      api.logger.error(
+        "[opengate] hooks.token is not configured. " +
+        "Add the following to your OpenClaw config to enable task spawning:\n" +
+        '  "hooks": { "enabled": true, "token": "<your-secret>", ' +
+        '"allowRequestSessionKey": true, "allowedSessionKeyPrefixes": ["opengate-task:"] }',
+      );
+      return;
+    }
 
-    start(ctx) {
-      poller = new OpenGatePoller(pluginCfg, api.config, ctx.logger, ctx.stateDir);
-      poller.start();
-    },
+    api.registerService({
+      id: "opengate-poller",
 
-    stop(ctx) {
-      poller?.stop();
-      poller = null;
-    },
-  });
-}
+      start(ctx) {
+        poller = new OpenGatePoller(pluginCfg, api.config, ctx.logger, ctx.stateDir);
+        poller.start();
+      },
+
+      stop(ctx) {
+        poller?.stop();
+        poller = null;
+      },
+    });
+  },
+};
