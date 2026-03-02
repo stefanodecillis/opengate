@@ -21,6 +21,10 @@ pub async fn create_trigger(
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    if !validate_initial_status(&body.action_config) {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     if state
         .storage
         .get_project(identity.tenant_id(), &project_id)
@@ -95,6 +99,12 @@ pub async fn update_trigger(
 ) -> Result<Json<WebhookTrigger>, StatusCode> {
     if let Some(ref at) = body.action_type {
         if at != "create_task" {
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    if let Some(ref cfg) = body.action_config {
+        if !validate_initial_status(cfg) {
             return Err(StatusCode::UNPROCESSABLE_ENTITY);
         }
     }
@@ -274,6 +284,16 @@ fn sha256_hex(input: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+const ALLOWED_INITIAL_STATUSES: &[&str] = &["backlog", "todo", "in_progress"];
+
+fn validate_initial_status(cfg: &serde_json::Value) -> bool {
+    match cfg.get("initial_status") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::String(s)) => ALLOWED_INITIAL_STATUSES.contains(&s.as_str()),
+        _ => false,
+    }
+}
+
 fn execute_trigger_action(
     storage: &dyn StorageBackend,
     trigger: &WebhookTrigger,
@@ -337,9 +357,35 @@ fn execute_create_task(
     };
 
     let task = storage.create_task(None, &trigger.project_id, &create_input, "system");
+
+    // Apply initial_status if specified and different from the default "backlog"
+    let final_status = match cfg.get("initial_status").and_then(|v| v.as_str()) {
+        Some(s) if s != "backlog" && ALLOWED_INITIAL_STATUSES.contains(&s) => {
+            let update = UpdateTask {
+                status: Some(s.to_string()),
+                title: None,
+                description: None,
+                priority: None,
+                tags: None,
+                context: None,
+                output: None,
+                due_date: None,
+                assignee_type: None,
+                assignee_id: None,
+                reviewer_type: None,
+                reviewer_id: None,
+                scheduled_at: None,
+                recurrence_rule: None,
+            };
+            let _ = storage.update_task(None, &task.id, &update);
+            s.to_string()
+        }
+        _ => task.status.clone(),
+    };
+
     Ok(serde_json::json!({
         "task_id": task.id,
         "task_title": task.title,
-        "status": task.status
+        "status": final_status
     }))
 }
