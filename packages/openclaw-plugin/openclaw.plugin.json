@@ -2,7 +2,7 @@
   "id": "opengate",
   "name": "OpenGate",
   "description": "Polls OpenGate for assigned tasks and spawns isolated OpenClaw sessions to execute them. Turns OpenGate into the orchestrator.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "skills": ["./skills/opengate"],
   "configSchema": {
     "type": "object",
@@ -32,6 +32,10 @@
       "maxConcurrent": {
         "type": "number",
         "description": "Max concurrent task sessions (default: 3)"
+      },
+      "projectsDir": {
+        "type": "string",
+        "description": "Base directory where project repos live on disk (default: ~/Projects)"
       }
     }
   },
@@ -41,6 +45,7 @@
     "agentId": { "label": "OpenClaw Agent ID", "placeholder": "main" },
     "model": { "label": "Model Override", "placeholder": "anthropic/claude-sonnet-4-6" },
     "pollIntervalMs": { "label": "Poll Interval (ms)", "advanced": true },
-    "maxConcurrent": { "label": "Max Concurrent Tasks", "advanced": true }
+    "maxConcurrent": { "label": "Max Concurrent Tasks", "advanced": true },
+    "projectsDir": { "label": "Projects Directory", "placeholder": "~/Projects", "advanced": true }
   }
 }

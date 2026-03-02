@@ -14,7 +14,34 @@ type Task = {
   context?: Record<string, unknown>;
 };
 
-export function buildBootstrapPrompt(task: Task, openGateUrl: string, apiKey: string): string {
+type ProjectInfo = {
+  id: string;
+  name: string;
+  repo_url?: string | null;
+  default_branch?: string | null;
+};
+
+/**
+ * Extracts the repo name from a GitHub URL.
+ * e.g. "https://github.com/stefanodecillis/taskforge" → "taskforge"
+ */
+function repoNameFromUrl(repoUrl: string): string | null {
+  try {
+    const url = new URL(repoUrl);
+    const segments = url.pathname.replace(/\.git$/, "").split("/").filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildBootstrapPrompt(
+  task: Task,
+  openGateUrl: string,
+  apiKey: string,
+  project?: ProjectInfo | null,
+  projectsDir?: string,
+): string {
   const tags = Array.isArray(task.tags) && task.tags.length > 0
     ? task.tags.join(", ")
     : "none";
@@ -24,6 +51,31 @@ export function buildBootstrapPrompt(task: Task, openGateUrl: string, apiKey: st
     : "";
 
   const projectId = task.project_id ?? "unknown";
+  const defaultBranch = project?.default_branch ?? "main";
+
+  // Resolve the local workspace path for this project
+  let workspacePath: string | null = null;
+  if (project?.repo_url) {
+    const repoName = repoNameFromUrl(project.repo_url);
+    if (repoName && projectsDir) {
+      workspacePath = `${projectsDir}/${repoName}`;
+    }
+  }
+
+  const workspaceBlock = workspacePath
+    ? `### Phase 4: Workspace Setup
+6. **Set up your workspace:**
+   - \`cd ${workspacePath}\`
+   - Pull latest: \`git fetch origin && git checkout ${defaultBranch} && git pull origin ${defaultBranch}\`
+   - Create a feature branch: \`git checkout -b <branch-name>\`
+   - Branch naming: use the task title slugified, e.g. \`feat/add-user-auth\` or \`fix/null-pointer-in-parser\`
+   - If \`${workspacePath}\` does not exist, clone it: \`git clone ${project!.repo_url} ${workspacePath}\``
+    : `### Phase 4: Workspace Setup
+6. **Set up your workspace:**
+   - Fetch project info: \`GET /api/projects/${projectId}\` — read \`repo_url\` and \`default_branch\`
+   - Derive the local path from the repo name (under ~/Projects/)
+   - If the directory doesn't exist, clone it
+   - Create a feature branch from the default branch`;
 
   return `You are an autonomous coding agent assigned a task via OpenGate.
 
@@ -62,19 +114,12 @@ Before writing any code, gather all available context:
    - Read any returned entries — they contain architecture decisions, patterns, gotchas, and conventions for this project
    - Follow these conventions in your implementation
 
-4. **Check project info** — \`GET /api/projects/${projectId}\`
-   - Note the \`repo_url\` and \`default_branch\` — use these for your workspace setup
-
 ### Phase 3: Plan & Announce
-5. **Post starting comment** — \`POST /api/tasks/${task.id}/activity\`
+4. **Post starting comment** — \`POST /api/tasks/${task.id}/activity\`
    Body: \`{"content": "Starting work. Plan: <your plan informed by the context you gathered, 2-4 sentences>"}\`
    - Your plan should reflect what you learned from the knowledge base, existing comments, and dependencies
 
-### Phase 4: Workspace Setup
-6. **Set up your workspace:**
-   - Navigate to the project workspace (based on \`repo_url\` from the project info)
-   - Create a feature branch from the default branch: \`git checkout -b <branch-name>\`
-   - Branch naming: use the task title slugified, e.g. \`feat/add-user-auth\` or \`fix/null-pointer-in-parser\`
+${workspaceBlock}
 
 ### Phase 5: Do the Work
 7. **Implement the solution:**
@@ -91,8 +136,8 @@ Before writing any code, gather all available context:
    Body: \`{"title": "...", "content": "...", "tags": [...], "category": "<architecture|pattern|gotcha|decision|reference>"}\`
    - Write entries for: architectural decisions you made, gotchas you encountered, patterns you established
 
-10. **Complete** — \`POST /api/tasks/${task.id}/complete\`
-    Body: \`{"summary": "<what was done>", "output": {"branch": "...", "commits": [...]}}\`
+10. **Complete the task** — \`POST /api/tasks/${task.id}/complete\`
+    Body: \`{"summary": "<what was done>", "output": {"branch": "<branch-name>", "commits": ["<hash>"]}}\`
 
 ## Handling Blockers
 If you encounter a blocker that requires human input:

@@ -5,6 +5,8 @@ export type OpenGatePluginConfig = {
   model?: string;
   pollIntervalMs?: number;
   maxConcurrent?: number;
+  /** Base directory where project repos live on disk. Defaults to ~/Projects */
+  projectsDir?: string;
 };
 
 export function resolveConfig(raw: Record<string, unknown>): OpenGatePluginConfig {
@@ -14,6 +16,8 @@ export function resolveConfig(raw: Record<string, unknown>): OpenGatePluginConfi
   if (!url) throw new Error("[opengate] plugin config missing: url");
   if (!apiKey) throw new Error("[opengate] plugin config missing: apiKey");
 
+  const home = process.env.HOME ?? "/home/unknown";
+
   return {
     url,
     apiKey,
@@ -21,5 +25,6 @@ export function resolveConfig(raw: Record<string, unknown>): OpenGatePluginConfi
     model: typeof raw.model === "string" ? raw.model : undefined,
     pollIntervalMs: typeof raw.pollIntervalMs === "number" ? raw.pollIntervalMs : 30_000,
     maxConcurrent: typeof raw.maxConcurrent === "number" ? raw.maxConcurrent : 3,
+    projectsDir: typeof raw.projectsDir === "string" ? raw.projectsDir : `${home}/Projects`,
   };
 }

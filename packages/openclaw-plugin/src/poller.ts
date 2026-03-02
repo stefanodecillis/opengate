@@ -21,6 +21,28 @@ type InboxResponse = {
   in_progress_tasks?: OpenGateTask[];
 };
 
+export type ProjectInfo = {
+  id: string;
+  name: string;
+  repo_url?: string | null;
+  default_branch?: string | null;
+};
+
+async function fetchProject(url: string, apiKey: string, projectId: string): Promise<ProjectInfo | null> {
+  try {
+    const resp = await fetch(`${url}/api/projects/${projectId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) return null;
+    const body = (await resp.json()) as { project?: ProjectInfo } & ProjectInfo;
+    // The endpoint returns ProjectWithStats which wraps project, but handle both shapes
+    return body.project ?? body;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> {
   const resp = await fetch(`${url}/api/agents/me/inbox`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -39,6 +61,7 @@ export class OpenGatePoller {
   private timer: ReturnType<typeof setInterval> | null = null;
   private state: TaskState;
   private running = false;
+  private projectCache = new Map<string, ProjectInfo>();
 
   constructor(
     private pluginCfg: OpenGatePluginConfig,
@@ -117,10 +140,31 @@ export class OpenGatePoller {
     }
   }
 
+  private async resolveProject(projectId: string): Promise<ProjectInfo | null> {
+    const cached = this.projectCache.get(projectId);
+    if (cached) return cached;
+
+    const project = await fetchProject(this.pluginCfg.url, this.pluginCfg.apiKey, projectId);
+    if (project) this.projectCache.set(projectId, project);
+    return project;
+  }
+
   private async spawnTask(task: OpenGateTask): Promise<void> {
     this.logger.info(`[opengate] Spawning session for task: "${task.title}" (${task.id})`);
 
-    const prompt = buildBootstrapPrompt(task, this.pluginCfg.url, this.pluginCfg.apiKey);
+    // Resolve project info to get repo_url → local workspace path
+    let project: ProjectInfo | null = null;
+    if (task.project_id) {
+      project = await this.resolveProject(task.project_id);
+    }
+
+    const prompt = buildBootstrapPrompt(
+      task,
+      this.pluginCfg.url,
+      this.pluginCfg.apiKey,
+      project,
+      this.pluginCfg.projectsDir,
+    );
 
     const result = await spawnTaskSession(
       task.id,
