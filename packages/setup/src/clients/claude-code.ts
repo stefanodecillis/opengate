@@ -1,7 +1,8 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Scope } from '../prompts.js'
+import { readJsonSafe } from '../read-json.js'
 
 interface McpConfig {
   mcpServers?: Record<string, unknown>
@@ -55,13 +56,4 @@ async function writeGlobalConfig(mcpEntry: unknown): Promise<string> {
   }
   await writeFile(filePath, JSON.stringify(config, null, 2) + '\n')
   return filePath
-}
-
-async function readJsonSafe<T>(path: string): Promise<T | undefined> {
-  try {
-    const content = await readFile(path, 'utf-8')
-    return JSON.parse(content) as T
-  } catch {
-    return undefined
-  }
 }

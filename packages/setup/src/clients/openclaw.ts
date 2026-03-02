@@ -1,6 +1,16 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ConnectionMode } from '../prompts.js'
+import { readJsonSafe } from '../read-json.js'
+
+interface OpenClawHooks {
+  enabled?: boolean
+  token?: string
+  allowRequestSessionKey?: boolean
+  allowedSessionKeyPrefixes?: string[]
+  [key: string]: unknown
+}
 
 interface OpenClawConfig {
   plugins?: {
@@ -8,6 +18,7 @@ interface OpenClawConfig {
     entries?: Record<string, unknown>
     [key: string]: unknown
   }
+  hooks?: OpenClawHooks
   [key: string]: unknown
 }
 
@@ -37,8 +48,24 @@ export async function writeOpenClawConfig(
     ? existingAllow
     : [...existingAllow, 'opengate']
 
+  // Ensure hooks are configured for the opengate plugin (spawn task sessions)
+  const existingHooks = existing?.hooks ?? {}
+  const prefixes = Array.isArray(existingHooks.allowedSessionKeyPrefixes)
+    ? existingHooks.allowedSessionKeyPrefixes
+    : []
+  const hooks: OpenClawHooks = {
+    ...existingHooks,
+    enabled: existingHooks.enabled ?? true,
+    token: existingHooks.token ?? randomUUID(),
+    allowRequestSessionKey: existingHooks.allowRequestSessionKey ?? true,
+    allowedSessionKeyPrefixes: prefixes.includes('opengate-task:')
+      ? prefixes
+      : [...prefixes, 'opengate-task:'],
+  }
+
   const config: OpenClawConfig = {
     ...existing,
+    hooks,
     // NOTE: do NOT inject agents.main or MCP server config here.
     // The OpenClaw plugin handles the OpenGate connection natively —
     // no MCP server is needed. Injecting agents.main causes OpenClaw
@@ -60,15 +87,6 @@ export async function writeOpenClawConfig(
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, JSON.stringify(config, null, 2) + '\n')
   return configPath
-}
-
-async function readJsonSafe<T>(path: string): Promise<T | undefined> {
-  try {
-    const content = await readFile(path, 'utf-8')
-    return JSON.parse(content) as T
-  } catch {
-    return undefined
-  }
 }
 
 /**

@@ -1,6 +1,7 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { readJsonSafe } from '../read-json.js'
 
 interface OpenCodeConfig {
   mcp?: Record<string, unknown>
@@ -34,13 +35,4 @@ export async function writeOpenCodeConfig(url: string, key: string, projectId?: 
 
   await writeFile(filePath, JSON.stringify(config, null, 2) + '\n')
   return filePath
-}
-
-async function readJsonSafe<T>(path: string): Promise<T | undefined> {
-  try {
-    const content = await readFile(path, 'utf-8')
-    return JSON.parse(content) as T
-  } catch {
-    return undefined
-  }
 }
