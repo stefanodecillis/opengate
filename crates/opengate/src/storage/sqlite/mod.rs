@@ -614,6 +614,13 @@ impl WebhookStore for SqliteBackend {
     fn delete_webhook_trigger(&self, _tenant: Option<&str>, trigger_id: &str) -> bool {
         db_ops::delete_webhook_trigger(&self.lock(), trigger_id)
     }
+    fn rotate_webhook_trigger_secret(
+        &self,
+        _tenant: Option<&str>,
+        _trigger_id: &str,
+    ) -> Option<(WebhookTrigger, String)> {
+        None // SQLite mode: rotation handled at product layer
+    }
     fn log_trigger_execution(
         &self,
         _tenant: Option<&str>,

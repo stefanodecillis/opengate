@@ -3830,6 +3830,7 @@ pub fn create_webhook_trigger(
         action_type: action_type.to_string(),
         action_config: action_config.clone(),
         enabled: true,
+        ip_allowlist: vec![],
         created_at: now.clone(),
         updated_at: now,
     };
@@ -3856,6 +3857,7 @@ pub fn list_webhook_triggers(
             action_type: row.get(3)?,
             action_config: config,
             enabled: row.get::<_, i64>(5)? != 0,
+            ip_allowlist: vec![],
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
         })
@@ -3884,6 +3886,7 @@ pub fn get_webhook_trigger_for_validation(
                 action_type: row.get(3)?,
                 action_config: config,
                 enabled: row.get::<_, i64>(5)? != 0,
+                ip_allowlist: vec![],
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
             };
@@ -3950,6 +3953,7 @@ pub fn update_webhook_trigger(
                 action_type: row.get(3)?,
                 action_config: config,
                 enabled: row.get::<_, i64>(5)? != 0,
+                ip_allowlist: vec![],
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
             })

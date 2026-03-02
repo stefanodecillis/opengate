@@ -866,6 +866,8 @@ pub struct WebhookTrigger {
     pub action_type: String,
     pub action_config: serde_json::Value,
     pub enabled: bool,
+    #[serde(default)]
+    pub ip_allowlist: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -890,6 +892,7 @@ pub struct UpdateTriggerRequest {
     pub action_type: Option<String>,
     pub action_config: Option<serde_json::Value>,
     pub enabled: Option<bool>,
+    pub ip_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
