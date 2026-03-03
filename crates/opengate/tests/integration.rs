@@ -2441,6 +2441,9 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         &agent.id,
     );
@@ -3045,6 +3048,9 @@ async fn test_auto_target_zero_matches() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         &agent.id,
     );
@@ -3126,6 +3132,9 @@ async fn test_auto_target_single_exact_match() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         &creator.id,
     );
@@ -3204,6 +3213,9 @@ async fn test_auto_target_multiple_matches() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         &agent1.id,
     );
@@ -4319,6 +4331,9 @@ fn test_tenant_isolation_tasks() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         "sys",
     );
@@ -4330,6 +4345,9 @@ fn test_tenant_isolation_tasks() {
             description: None,
             repo_url: None,
             default_branch: None,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
         },
         "sys",
     );
