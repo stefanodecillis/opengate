@@ -4259,18 +4259,27 @@ fn test_tenant_isolation_projects() {
         description: None,
         repo_url: None,
         default_branch: None,
+        join_mode: None,
+        cta_enabled: None,
+        is_public: None,
     };
     let input_b = CreateProject {
         name: "Tenant B Project".to_string(),
         description: None,
         repo_url: None,
         default_branch: None,
+        join_mode: None,
+        cta_enabled: None,
+        is_public: None,
     };
     let no_owner = CreateProject {
         name: "No Owner Project".to_string(),
         description: None,
         repo_url: None,
         default_branch: None,
+        join_mode: None,
+        cta_enabled: None,
+        is_public: None,
     };
 
     // Create projects for different tenants
