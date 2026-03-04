@@ -1354,6 +1354,9 @@ pub fn claim_task(
     if status == TaskStatus::Done || status == TaskStatus::Cancelled {
         return Err("Cannot claim a completed or cancelled task".to_string());
     }
+    if status == TaskStatus::Backlog {
+        return Err("Cannot claim a backlog task. Move it to todo first.".to_string());
+    }
 
     // Enforce max_concurrent_tasks limit
     let agent = get_agent(conn, agent_id).ok_or("Agent not found")?;
@@ -1380,7 +1383,7 @@ pub fn claim_task(
     }
 
     let new_status = match status {
-        TaskStatus::Backlog | TaskStatus::Todo | TaskStatus::Blocked => "in_progress",
+        TaskStatus::Todo | TaskStatus::Blocked => "in_progress",
         _ => &task.status,
     };
 
