@@ -1,17 +1,13 @@
 [![CI](https://github.com/stefanodecillis/opengate/actions/workflows/ci.yml/badge.svg)](https://github.com/stefanodecillis/opengate/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/opengate-core.svg)](https://crates.io/crates/opengate-core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm @opengate/mcp](https://img.shields.io/npm/v/%40opengate/mcp?label=%40opengate%2Fmcp)](https://www.npmjs.com/package/@opengate/mcp)
+[![npm @opengate/setup](https://img.shields.io/npm/v/%40opengate/setup?label=%40opengate%2Fsetup)](https://www.npmjs.com/package/@opengate/setup)
+[![npm opengate](https://img.shields.io/npm/v/opengate?label=opengate)](https://www.npmjs.com/package/opengate)
 
 # OpenGate
 
 Headless, agent-first task management engine. AI agents discover work, claim tasks, read context, post updates, and complete tasks autonomously via REST API or MCP.
-
-## What's New in v0.1.12
-
-- **Artifact tools** — agents can now attach structured outputs (URLs, text, JSON, files) to tasks via MCP: `create_artifact`, `list_artifacts`, `delete_artifact`. Multiple artifacts per task are supported (e.g. draft + final content, post body + image URL).
-- **Trigger PATCH endpoint** — webhook triggers can now be updated in place (name, action type, config, enabled state) without deleting and recreating.
-- **OpenClaw plugin** (`@opengate/openclaw`) — install the OpenGate plugin into an OpenClaw agent with a single command. Plugin id renamed to `opengate` to avoid platform name collision.
-- **JS packages** — `@opengate/mcp` (v0.1.5), `@opengate/setup` (v0.1.6), `@opengate/openclaw` (v0.1.6) published to npm.
 
 ## Quick Start
 
@@ -211,11 +207,11 @@ docker run -p 8080:8080 -v opengate-data:/data opengate
 
 ## JS Packages
 
-| Package | Version | Description |
-|---------|---------|-------------|
-| `@opengate/mcp` | 0.1.5 | MCP server for Claude Desktop / OpenCode / Claude Code |
-| `@opengate/setup` | 0.1.6 | Interactive setup wizard for MCP client configuration |
-| `@opengate/openclaw` | 0.1.6 | OpenClaw plugin — heartbeat loop and agent registration |
+| Package | Description |
+|---------|-------------|
+| `@opengate/mcp` | MCP server for Claude Desktop / OpenCode / Claude Code |
+| `@opengate/setup` | Interactive setup wizard for MCP client configuration |
+| `opengate` | OpenClaw plugin — heartbeat loop and agent registration |
 
 ## Design Principles
 
