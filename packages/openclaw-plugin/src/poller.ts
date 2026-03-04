@@ -43,7 +43,12 @@ async function fetchProject(url: string, apiKey: string, projectId: string): Pro
   }
 }
 
-async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> {
+type InboxResult = {
+  todoTasks: OpenGateTask[];
+  inProgressTasks: OpenGateTask[];
+};
+
+async function fetchInbox(url: string, apiKey: string): Promise<InboxResult> {
   const resp = await fetch(`${url}/api/agents/me/inbox`, {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(10_000),
@@ -54,7 +59,10 @@ async function fetchInbox(url: string, apiKey: string): Promise<OpenGateTask[]> 
   }
 
   const body = (await resp.json()) as InboxResponse;
-  return body.todo_tasks ?? [];
+  return {
+    todoTasks: body.todo_tasks ?? [],
+    inProgressTasks: body.in_progress_tasks ?? [],
+  };
 }
 
 export class OpenGatePoller {
@@ -106,9 +114,9 @@ export class OpenGatePoller {
       return;
     }
 
-    let tasks: OpenGateTask[];
+    let inbox: InboxResult;
     try {
-      tasks = await fetchInbox(this.pluginCfg.url, this.pluginCfg.apiKey);
+      inbox = await fetchInbox(this.pluginCfg.url, this.pluginCfg.apiKey);
     } catch (e) {
       this.logger.warn(
         `[opengate] Failed to fetch inbox: ${e instanceof Error ? e.message : String(e)}`,
@@ -116,11 +124,21 @@ export class OpenGatePoller {
       return;
     }
 
-    if (tasks.length === 0) return;
+    // Release orphaned in_progress tasks (not tracked locally)
+    for (const task of inbox.inProgressTasks) {
+      if (!this.state.isSpawned(task.id)) {
+        this.logger.warn(
+          `[opengate] Orphaned in_progress task "${task.title}" (${task.id}) — releasing back to todo`,
+        );
+        await this.releaseTask(task.id);
+      }
+    }
 
-    this.logger.info(`[opengate] Found ${tasks.length} todo task(s)`);
+    if (inbox.todoTasks.length === 0) return;
 
-    for (const task of tasks) {
+    this.logger.info(`[opengate] Found ${inbox.todoTasks.length} todo task(s)`);
+
+    for (const task of inbox.todoTasks) {
       if (!this.running) break;
 
       const currentActive = this.state.activeCount();
@@ -147,6 +165,26 @@ export class OpenGatePoller {
     const project = await fetchProject(this.pluginCfg.url, this.pluginCfg.apiKey, projectId);
     if (project) this.projectCache.set(projectId, project);
     return project;
+  }
+
+  private async releaseTask(taskId: string): Promise<void> {
+    try {
+      const resp = await fetch(
+        `${this.pluginCfg.url}/api/tasks/${taskId}/release`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${this.pluginCfg.apiKey}` },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!resp.ok) {
+        this.logger.warn(`[opengate] Failed to release task ${taskId}: HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[opengate] Failed to release task ${taskId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   private async spawnTask(task: OpenGateTask): Promise<void> {
