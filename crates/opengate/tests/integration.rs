@@ -111,6 +111,22 @@ impl TestServer {
         assert_eq!(resp.status(), 201);
         resp.json::<Value>().await.unwrap()
     }
+
+    /// Create a task and immediately move it to `todo` so it is claimable.
+    async fn create_ready_task(&self, project_id: &str, title: &str) -> Value {
+        let task = self.create_task(project_id, title).await;
+        let task_id = task["id"].as_str().unwrap();
+        let resp = self
+            .client()
+            .patch(format!("{}/api/tasks/{}", self.base_url, task_id))
+            .header("Authorization", self.auth_header())
+            .json(&json!({ "status": "todo" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        resp.json::<Value>().await.unwrap()
+    }
 }
 
 type WsSink = futures_util::stream::SplitSink<
@@ -259,9 +275,9 @@ async fn test_claim_task() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Claim").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Claim Task").await;
+    let task = s.create_ready_task(pid, "Test Claim Task").await;
     let task_id = task["id"].as_str().unwrap();
-    assert_eq!(task["status"], "backlog");
+    assert_eq!(task["status"], "todo");
 
     let resp = s
         .client()
@@ -283,7 +299,7 @@ async fn test_idempotent_claim() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Idempotent").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Idempotent Claim").await;
+    let task = s.create_ready_task(pid, "Test Idempotent Claim").await;
     let task_id = task["id"].as_str().unwrap();
 
     // First claim
@@ -353,7 +369,7 @@ async fn test_complete_task() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Complete").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Complete Task").await;
+    let task = s.create_ready_task(pid, "Test Complete Task").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim first (backlog -> in_progress)
@@ -447,7 +463,7 @@ async fn test_my_tasks() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - My Tasks").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test My Tasks").await;
+    let task = s.create_ready_task(pid, "Test My Tasks").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim the task
@@ -546,7 +562,7 @@ async fn test_release_task() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Release").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Release Task").await;
+    let task = s.create_ready_task(pid, "Test Release Task").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim
@@ -832,7 +848,7 @@ async fn test_review_approve_flow() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Review").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Review Flow").await;
+    let task = s.create_ready_task(pid, "Test Review Flow").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim (backlog -> in_progress)
@@ -876,7 +892,7 @@ async fn test_review_request_changes() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Changes").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Request Changes").await;
+    let task = s.create_ready_task(pid, "Test Request Changes").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim + move to review
@@ -917,7 +933,7 @@ async fn test_handoff_status() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Handoff").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Handoff").await;
+    let task = s.create_ready_task(pid, "Test Handoff").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim
@@ -962,8 +978,8 @@ async fn test_downstream_output_injection() {
     let project = s.create_project("Test Project - Downstream").await;
     let pid = project["id"].as_str().unwrap();
 
-    // Create parent task
-    let parent = s.create_task(pid, "Parent Task").await;
+    // Create parent task (move to todo so it can be claimed)
+    let parent = s.create_ready_task(pid, "Parent Task").await;
     let parent_id = parent["id"].as_str().unwrap();
 
     // Create child task with dependency on parent
@@ -1119,7 +1135,7 @@ async fn test_stale_release_preserves_review() {
 
     let project = s.create_project("Test Project - Stale Release").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Review Preservation").await;
+    let task = s.create_ready_task(pid, "Test Review Preservation").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Claim
@@ -1502,7 +1518,14 @@ async fn test_task_dependencies_crud_and_auto_unblock() {
         "should block in_progress with 409 when dep not met"
     );
 
-    // Claim B → in_progress, then complete it → A should auto-transition to todo
+    // Move B to todo, then claim → in_progress, then complete it → A should auto-transition to todo
+    s.client()
+        .patch(format!("{}/api/tasks/{}", s.base_url, b_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "status": "todo" }))
+        .send()
+        .await
+        .unwrap();
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, b_id))
         .header("Authorization", s.auth_header())
@@ -1759,6 +1782,15 @@ async fn test_task_recurrence_creates_next_on_complete() {
         "recurrence_rule should be persisted"
     );
 
+    // Move to todo first (scheduled_at in the past auto-transitions, but be explicit)
+    s.client()
+        .patch(format!("{}/api/tasks/{}", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "status": "todo" }))
+        .send()
+        .await
+        .unwrap();
+
     // Claim task → in_progress, then complete it
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
@@ -1843,7 +1875,14 @@ async fn test_task_recurrence_respects_end_after() {
     let task: Value = resp.json().await.unwrap();
     let task_id = task["id"].as_str().unwrap();
 
-    // Claim original → complete → should create 1 recurrence
+    // Move to todo then claim original → complete → should create 1 recurrence
+    s.client()
+        .patch(format!("{}/api/tasks/{}", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "status": "todo" }))
+        .send()
+        .await
+        .unwrap();
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
         .header("Authorization", s.auth_header())
@@ -1879,7 +1918,14 @@ async fn test_task_recurrence_respects_end_after() {
     );
     let child_id = children[0]["id"].as_str().unwrap().to_string();
 
-    // Claim + complete the first recurrence → end_after=1 means no more
+    // Move recurrence to todo, then claim + complete → end_after=1 means no more
+    s.client()
+        .patch(format!("{}/api/tasks/{}", s.base_url, child_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "status": "todo" }))
+        .send()
+        .await
+        .unwrap();
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, child_id))
         .header("Authorization", s.auth_header())
@@ -2465,7 +2511,17 @@ async fn test_stale_release_skips_tasks_with_open_questions() {
         &agent.id,
     );
 
-    // Claim the task (backlog → in_progress)
+    // Move to todo first, then claim
+    db_ops::update_task(
+        &conn,
+        None,
+        &task.id,
+        &opengate_models::UpdateTask {
+            status: Some("todo".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     db_ops::claim_task(&conn, None, &task.id, &agent.id, &agent.name).unwrap();
 
     // Create a blocking open question on this task
@@ -3654,10 +3710,10 @@ async fn test_start_review_sets_timestamp() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Start Review").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Start Review").await;
+    let task = s.create_ready_task(pid, "Test Start Review").await;
     let task_id = task["id"].as_str().unwrap();
 
-    // Claim (backlog -> in_progress)
+    // Claim (todo -> in_progress)
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
         .header("Authorization", s.auth_header())
@@ -3711,10 +3767,10 @@ async fn test_start_review_requires_review_status() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Start Review Status").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Start Review Status").await;
+    let task = s.create_ready_task(pid, "Test Start Review Status").await;
     let task_id = task["id"].as_str().unwrap();
 
-    // Claim (backlog -> in_progress)
+    // Claim (todo -> in_progress)
     s.client()
         .post(format!("{}/api/tasks/{}/claim", s.base_url, task_id))
         .header("Authorization", s.auth_header())
@@ -3743,7 +3799,7 @@ async fn test_start_review_non_reviewer_gets_403() {
     let s = TestServer::start().await;
     let project = s.create_project("Test Project - Non Reviewer").await;
     let pid = project["id"].as_str().unwrap();
-    let task = s.create_task(pid, "Test Non Reviewer").await;
+    let task = s.create_ready_task(pid, "Test Non Reviewer").await;
     let task_id = task["id"].as_str().unwrap();
 
     // Register a second agent to be the reviewer
@@ -3804,7 +3860,7 @@ async fn test_review_task_count_in_agent_response() {
     let pid = project["id"].as_str().unwrap();
 
     // Create a task, claim it, move to review with our agent as reviewer
-    let task = s.create_task(pid, "Task for Review Count").await;
+    let task = s.create_ready_task(pid, "Task for Review Count").await;
     let task_id = task["id"].as_str().unwrap();
 
     s.client()
@@ -4079,6 +4135,17 @@ async fn test_ws_filter_agent_self() {
         no_event.is_none(),
         "should not receive task.created with no assignee"
     );
+
+    // Move to todo so it can be claimed
+    s.client()
+        .patch(format!("{}/api/tasks/{}", s.base_url, task_id))
+        .header("Authorization", s.auth_header())
+        .json(&json!({ "status": "todo" }))
+        .send()
+        .await
+        .unwrap();
+    // Drain any status-change events
+    recv_json(&mut stream, 300).await;
 
     // Claim the task → assigns agent, emits task.claimed with agent_id = self
     s.client()

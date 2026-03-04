@@ -266,7 +266,7 @@ pub struct CreateTask {
     pub recurrence_rule: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct UpdateTask {
     pub title: Option<String>,
     pub description: Option<String>,
