@@ -515,6 +515,9 @@ fn call_create_project(ctx: &McpContext, args: &Value) -> Result<Value, String> 
         description,
         repo_url,
         default_branch,
+        join_mode: None,
+        cta_enabled: None,
+        is_public: None,
     };
     let project =
         db_ops::create_project(&ctx.conn, ctx.tenant_id.as_deref(), &input, &ctx.agent_id);

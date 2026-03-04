@@ -234,6 +234,9 @@ pub struct CreateProject {
     pub description: Option<String>,
     pub repo_url: Option<String>,
     pub default_branch: Option<String>,
+    pub join_mode: Option<String>,
+    pub cta_enabled: Option<bool>,
+    pub is_public: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +246,9 @@ pub struct UpdateProject {
     pub status: Option<String>,
     pub repo_url: Option<String>,
     pub default_branch: Option<String>,
+    pub join_mode: Option<String>,
+    pub cta_enabled: Option<bool>,
+    pub is_public: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
