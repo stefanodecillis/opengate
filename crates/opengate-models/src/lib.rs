@@ -52,6 +52,7 @@ impl TaskStatus {
                 TaskStatus::Cancelled,
             ],
             TaskStatus::Todo => vec![
+                TaskStatus::Backlog,
                 TaskStatus::InProgress,
                 TaskStatus::Blocked,
                 TaskStatus::Cancelled,
