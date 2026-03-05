@@ -482,6 +482,9 @@ fn get_project_inner(
             status: row.get(3)?,
             repo_url: row.get(4)?,
             default_branch: row.get(5)?,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
         })
@@ -539,6 +542,9 @@ pub fn list_projects(
             status: row.get(3)?,
             repo_url: row.get(4)?,
             default_branch: row.get(5)?,
+            join_mode: None,
+            cta_enabled: None,
+            is_public: None,
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
         })

@@ -131,6 +131,9 @@ pub struct Project {
     pub status: String,
     pub repo_url: Option<String>,
     pub default_branch: Option<String>,
+    pub join_mode: Option<String>,
+    pub cta_enabled: Option<bool>,
+    pub is_public: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }
