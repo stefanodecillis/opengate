@@ -1,6 +1,6 @@
 {
   "name": "opengate",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "description": "OpenGate task executor plugin for OpenClaw — polls assigned tasks and spawns isolated agent sessions",
   "type": "module",
   "main": "./dist/index.js",
