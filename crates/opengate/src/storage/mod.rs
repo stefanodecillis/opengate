@@ -343,6 +343,7 @@ pub trait EventStore: Send + Sync {
         payload: &serde_json::Value,
     ) -> Vec<PendingNotifWebhook>;
     fn get_last_event_id(&self, tenant: Option<&str>) -> i64;
+    #[allow(clippy::too_many_arguments)]
     fn insert_question_notification(
         &self,
         tenant: Option<&str>,
