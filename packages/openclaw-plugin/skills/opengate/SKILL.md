@@ -95,14 +95,24 @@ Specifically look for:
 
 This enforces capacity limits and dependency checks. If claiming fails, read the error — you may have too many tasks in progress or a dependency is incomplete.
 
-### 5. Comment: Starting Work
+### 5. Comment: Starting Work (REQUIRED)
 
 `post_comment(task_id, content)` → Post a comment before you start
 
-Your starting comment should include:
-- What you understand the task requires
-- Your planned approach
-- Any concerns or assumptions
+Your starting comment MUST use this structure:
+```
+## Starting Work
+
+**Plan:**
+- <step 1>
+- <step 2>
+
+**Context from KB:** <what you learned>
+
+**Concerns:** <any blockers or risks>
+```
+
+Do NOT skip this comment. It is how the team tracks work and maintains visibility.
 
 ### 6. Do the Work
 
@@ -125,7 +135,28 @@ Store useful artifacts like:
 - Links to PRs, commits, or external resources
 - Feature branch name (e.g. `task/<task_id_short>`) for workspace continuity
 
-### 9. Complete the Task
+### 9. Post Results Comment (REQUIRED)
+
+`post_comment(task_id, content)` → Post a final results comment
+
+Your results comment MUST use this structure:
+```
+## Results
+
+**Changes:**
+- <file1>: <what changed>
+- <file2>: <what changed>
+
+**Approach:** <brief explanation>
+
+**Tests:** <pass/fail status>
+
+**Commits:** <hash(es)>
+```
+
+Do NOT skip this comment. It is critical for reviewers and future reference.
+
+### 10. Complete the Task
 
 `complete_task(task_id, summary, output)` → Finish the task with a summary and structured output
 
@@ -181,19 +212,28 @@ If a dependency is no longer needed:
 - **References** — links, docs, external resources
 - **General** — anything else worth knowing
 
-### Writing Knowledge
+### Writing Knowledge (MANDATORY Review)
 
-When you discover something important during work, **write it back**:
+Before completing any task, review your work with this checklist:
+
+- [ ] Did I make an architecture or design decision? → Write it (category: `decision` or `architecture`)
+- [ ] Did I encounter a non-obvious gotcha or bug? → Write it (category: `gotcha`)
+- [ ] Did I establish or follow a pattern others should know? → Write it (category: `pattern`)
+- [ ] Did I discover project structure or conventions? → Write it (category: `reference`)
+
+If ANY apply, write knowledge entries BEFORE completing:
 
 `set_knowledge(project_id, key, title, content, tags, category)`
 
-Write knowledge when you:
-- Discover a non-obvious pattern or constraint
-- Make an architecture decision that affects future work
-- Find a gotcha that would trip up other agents
-- Establish a convention through your implementation
+Key naming: use kebab-case descriptors, e.g. `auth-middleware-pattern`, `db-migration-gotcha`
 
-Categories: `architecture`, `convention`, `gotcha`, `reference`, `general`
+**IMPORTANT: Only write PROJECT-SCOPED knowledge.** Do NOT write task-specific details.
+- Good: "The API uses tower middleware for auth, not axum extractors"
+- Bad: "Task T-123 required adding a new endpoint"
+
+If nothing new was discovered, that's fine — skip writing.
+
+Categories: `architecture`, `pattern`, `gotcha`, `decision`, `reference`
 
 ## Agent Profile
 

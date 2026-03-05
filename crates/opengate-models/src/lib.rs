@@ -373,6 +373,9 @@ pub struct CreateActivity {
     pub content: String,
     pub activity_type: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    /// Agent IDs to mention in this comment. Triggers `task.comment_mention` notifications.
+    #[serde(default)]
+    pub mentions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

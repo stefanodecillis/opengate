@@ -240,7 +240,8 @@ fn handle_tools_list() -> Result<Value, Value> {
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string", "description": "Task ID"},
-                    "content": {"type": "string", "description": "Comment content"}
+                    "content": {"type": "string", "description": "Comment content"},
+                    "mentions": {"type": "array", "items": {"type": "string"}, "description": "Optional agent IDs to @-mention in this comment"}
                 },
                 "required": ["task_id", "content"]
             })),
@@ -624,6 +625,7 @@ fn call_create_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
             content: format!("Task '{}' created via MCP", task.title),
             activity_type: Some("status_change".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -754,6 +756,7 @@ fn call_complete_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
                     content: summary.to_string(),
                     activity_type: Some("status_change".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             // v2: inject output into downstream dependent tasks
@@ -803,6 +806,7 @@ fn call_block_task(ctx: &McpContext, args: &Value) -> Result<Value, String> {
                     content: format!("Task blocked: {}", reason),
                     activity_type: Some("status_change".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             Ok(serde_json::to_value(&task).unwrap())
@@ -855,6 +859,7 @@ fn call_update_context(ctx: &McpContext, args: &Value) -> Result<Value, String> 
                     content: "Context updated (merge-patch) via MCP".to_string(),
                     activity_type: Some("context_update".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             Ok(serde_json::to_value(&task).unwrap())
@@ -874,9 +879,32 @@ fn call_post_comment(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing 'content'")?;
 
-    if db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id).is_none() {
-        return Err("Task not found".to_string());
+    let task = db_ops::get_task(&ctx.conn, ctx.tenant_id.as_deref(), task_id)
+        .ok_or_else(|| "Task not found".to_string())?;
+
+    // Parse optional mentions
+    let mentions: Vec<String> = args
+        .get("mentions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate mentions
+    if !mentions.is_empty() {
+        db_ops::validate_mentions(&ctx.conn, ctx.tenant_id.as_deref(), &task, &mentions)
+            .map_err(|bad_id| format!("Cannot mention agent: {}", bad_id))?;
     }
+
+    // Build metadata with mentions if present
+    let metadata = if mentions.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "mentions": mentions }))
+    };
 
     let activity = db_ops::create_activity(
         &ctx.conn,
@@ -886,9 +914,24 @@ fn call_post_comment(ctx: &McpContext, args: &Value) -> Result<Value, String> {
         &CreateActivity {
             content: content.to_string(),
             activity_type: Some("comment".to_string()),
-            metadata: None,
+            metadata,
+            mentions: None, // Already processed above
         },
     );
+
+    // Emit mention events
+    if !mentions.is_empty() {
+        db_ops::emit_mention_events(
+            &ctx.conn,
+            &task,
+            &mentions,
+            content,
+            "agent",
+            &ctx.agent_id,
+            &ctx.agent_name,
+        );
+    }
+
     Ok(serde_json::to_value(&activity).unwrap())
 }
 

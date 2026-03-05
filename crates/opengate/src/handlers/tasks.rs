@@ -61,6 +61,7 @@ pub async fn create_task(
             content: format!("Task '{}' created", task.title),
             activity_type: Some("status_change".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -116,6 +117,7 @@ pub async fn update_task(
                             ),
                             activity_type: Some("status_change".to_string()),
                             metadata: None,
+                            mentions: None,
                         },
                     );
 
@@ -235,6 +237,7 @@ pub async fn update_context(
                     content: "Context updated (merge-patch)".to_string(),
                     activity_type: Some("context_update".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             Ok(Json(task))
@@ -385,6 +388,7 @@ pub async fn complete_task(
                     content: summary.to_string(),
                     activity_type: Some("status_change".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             state
@@ -459,6 +463,7 @@ pub async fn block_task(
                     content: format!("Task blocked: {}", reason),
                     activity_type: Some("status_change".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             let pending = events::emit_task_event(
@@ -552,6 +557,7 @@ pub async fn assign_task(
                     ),
                     activity_type: Some("assignment".to_string()),
                     metadata: None,
+                    mentions: None,
                 },
             );
             let pending = events::emit_task_event(

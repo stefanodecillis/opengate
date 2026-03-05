@@ -472,4 +472,63 @@ pub trait StorageBackend:
 
         Some(task)
     }
+
+    /// Validate that all mention IDs are agents visible to this tenant
+    /// or directly involved in the task (assignee/reviewer).
+    fn validate_mentions(
+        &self,
+        tenant: Option<&str>,
+        task: &Task,
+        mention_ids: &[String],
+    ) -> Result<(), String> {
+        let mut allowed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Some(id) = &task.assignee_id {
+            allowed.insert(id.clone());
+        }
+        if let Some(id) = &task.reviewer_id {
+            allowed.insert(id.clone());
+        }
+        for agent in self.list_agents(tenant) {
+            allowed.insert(agent.id);
+        }
+        for id in mention_ids {
+            if !allowed.contains(id) {
+                return Err(id.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit `task.comment_mention` events for each mentioned agent.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mention_events(
+        &self,
+        tenant: Option<&str>,
+        task: &Task,
+        mention_ids: &[String],
+        comment_content: &str,
+        actor_type: &str,
+        actor_id: &str,
+        actor_name: &str,
+    ) -> Vec<PendingNotifWebhook> {
+        let mut pending = Vec::new();
+        for mentioned_id in mention_ids {
+            let payload = serde_json::json!({
+                "mentioned_agent_id": mentioned_id,
+                "comment_content": comment_content,
+                "actor_name": actor_name,
+                "task_title": task.title,
+            });
+            pending.extend(self.emit_event(
+                tenant,
+                "task.comment_mention",
+                Some(&task.id),
+                &task.project_id,
+                actor_type,
+                actor_id,
+                &payload,
+            ));
+        }
+        pending
+    }
 }

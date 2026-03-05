@@ -76,4 +76,9 @@ export class TaskState {
   activeCount(): number {
     return Object.keys(this.data.spawned).length;
   }
+
+  /** Returns all task IDs currently in the spawned set. */
+  spawnedIds(): string[] {
+    return Object.keys(this.data.spawned);
+  }
 }

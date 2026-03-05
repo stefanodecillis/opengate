@@ -114,9 +114,11 @@ Before writing any code, gather all available context:
    - Read any returned entries — they contain architecture decisions, patterns, gotchas, and conventions for this project
    - Follow these conventions in your implementation
 
-### Phase 3: Plan & Announce
+### Phase 3: Plan & Announce (REQUIRED)
 4. **Post starting comment** — \`POST /api/tasks/${task.id}/activity\`
-   Body: \`{"content": "Starting work. Plan: <your plan informed by the context you gathered, 2-4 sentences>"}\`
+   Body: \`{"content": "## Starting Work\\n\\n**Plan:**\\n- <step 1>\\n- <step 2>\\n\\n**Context from KB:** <what you learned>\\n\\n**Concerns:** <any blockers or risks>"}\`
+
+   This comment is REQUIRED. Do not skip it.
    - Your plan should reflect what you learned from the knowledge base, existing comments, and dependencies
 
 ${workspaceBlock}
@@ -128,15 +130,32 @@ ${workspaceBlock}
    - Run the project's test suite and fix any failures
    - Commit your changes with a descriptive message referencing the task
 
-### Phase 6: Report & Complete
+### Phase 5.5: Knowledge Review (MANDATORY)
+Before completing the task, review your work and ask yourself:
+- Did I make an architecture or design decision? → Write it (category: "decision" or "architecture")
+- Did I encounter a non-obvious gotcha or bug? → Write it (category: "gotcha")
+- Did I establish or follow a pattern others should know? → Write it (category: "pattern")
+- Did I discover project structure or conventions? → Write it (category: "reference")
+
+If ANY of the above apply, write knowledge entries BEFORE completing:
+\`PUT /api/projects/${projectId}/knowledge/<descriptive-key>\`
+Body: \`{"title": "...", "content": "...", "tags": [...], "category": "..."}\`
+
+Key naming: use kebab-case descriptors, e.g. "auth-middleware-pattern", "db-migration-gotcha"
+
+IMPORTANT: Only write PROJECT-SCOPED knowledge. Do NOT write task-specific details.
+Good: "The API uses tower middleware for auth, not axum extractors"
+Bad: "Task T-123 required adding a new endpoint"
+
+If nothing new was discovered, that's fine — skip this phase.
+
+### Phase 6: Report & Complete (REQUIRED)
 8. **Post results comment** — \`POST /api/tasks/${task.id}/activity\`
-   Body: \`{"content": "<summary of what changed: files modified, approach taken, test results, commit hash>"}\`
+   Body: \`{"content": "## Results\\n\\n**Changes:**\\n- <file1>: <what changed>\\n- <file2>: <what changed>\\n\\n**Approach:** <brief explanation>\\n\\n**Tests:** <pass/fail status>\\n\\n**Commits:** <hash(es)>"}\`
 
-9. **Write knowledge** (if you discovered something worth sharing) — \`PUT /api/projects/${projectId}/knowledge/<key>\`
-   Body: \`{"title": "...", "content": "...", "tags": [...], "category": "<architecture|pattern|gotcha|decision|reference>"}\`
-   - Write entries for: architectural decisions you made, gotchas you encountered, patterns you established
+   This comment is REQUIRED. Do not skip it.
 
-10. **Complete the task** — \`POST /api/tasks/${task.id}/complete\`
+9. **Complete the task** — \`POST /api/tasks/${task.id}/complete\`
     Body: \`{"summary": "<what was done>", "output": {"branch": "<branch-name>", "commits": ["<hash>"]}}\`
 
 ## Handling Blockers
@@ -155,6 +174,16 @@ If a dependency is not yet done:
 - Run tests before completing — do not complete with failing tests
 - Respect existing patterns found in the knowledge base
 - Keep commits atomic and descriptive
+
+## Handling @-Mentions
+If you receive a \`task.comment_mention\` notification:
+1. Read the comment content from the notification body
+2. Fetch the full task context: \`GET /api/tasks/{taskId}\`
+3. Reason about what's being asked:
+   - If it's a question → post a reply comment with your answer
+   - If it's a request for changes → update task status to in_progress, make the changes, then re-complete
+   - If it's a simple acknowledgment → post a brief confirmation comment
+4. Always reply with a comment so the human knows you've seen it
 
 Now begin. Start with Phase 1: claim the task.`;
 }

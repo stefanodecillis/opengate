@@ -345,6 +345,25 @@ fn route_event_notifications(
                 }
             }
         }
+        "task.comment_mention" => {
+            if let Some(mentioned_id) = payload.get("mentioned_agent_id").and_then(|v| v.as_str()) {
+                let comment = payload
+                    .get("comment_content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let author = actor_name_from_payload(payload);
+                let task_title = task.as_ref().map(|t| t.title.as_str()).unwrap_or("");
+                let snippet: String = comment.chars().take(300).collect();
+                pending.push(insert_notification(
+                    conn,
+                    mentioned_id,
+                    event_id,
+                    event_type,
+                    &format!("Mentioned in: {}", task_title),
+                    Some(&format!("{}: {}", author, snippet)),
+                ));
+            }
+        }
         "task.question_resolved" => {
             // Notifications handled by handlers (resolve_question and create_reply with is_resolution)
         }
@@ -1407,6 +1426,7 @@ pub fn claim_task(
             content: format!("Task claimed by agent '{}'", agent_name),
             activity_type: Some("assignment".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -1443,6 +1463,7 @@ pub fn release_task(
             content: "Task released back to pool".to_string(),
             activity_type: Some("assignment".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2572,6 +2593,7 @@ pub fn assign_task(
             content,
             activity_type: Some("assignment".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2633,6 +2655,7 @@ pub fn handoff_task(
             content: format!("Handoff to agent '{}': {}", to_agent.name, summary_text),
             activity_type: Some("assignment".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2674,6 +2697,7 @@ pub fn approve_task(
             content: format!("Review approved: {}", comment_text),
             activity_type: Some("status_change".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2727,6 +2751,7 @@ pub fn request_changes(
             content: format!("Changes requested: {}", comment),
             activity_type: Some("changes_requested".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2850,6 +2875,7 @@ pub fn submit_review_task(
             ),
             activity_type: Some("status_change".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -2899,6 +2925,7 @@ pub fn start_review_task(
             content: "Review started".to_string(),
             activity_type: Some("status_change".to_string()),
             metadata: None,
+            mentions: None,
         },
     );
 
@@ -4266,4 +4293,73 @@ fn task_to_inbox_item(conn: &Connection, task: &Task) -> InboxItem {
         updated_at: Some(task.updated_at.clone()),
         metadata: Some(serde_json::json!({ "dependency_status": dependency_status })),
     }
+}
+
+// ===== Mention Validation =====
+
+/// Build the set of agent IDs that can be mentioned on a task.
+/// Allowed: task assignee, task reviewer, plus all agents visible to the tenant.
+pub fn allowed_mention_ids(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task: &Task,
+) -> std::collections::HashSet<String> {
+    let mut allowed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(id) = &task.assignee_id {
+        allowed.insert(id.clone());
+    }
+    if let Some(id) = &task.reviewer_id {
+        allowed.insert(id.clone());
+    }
+    for agent in list_agents(conn, tenant) {
+        allowed.insert(agent.id);
+    }
+    allowed
+}
+
+/// Validate mention IDs against the allowed set. Returns the first invalid ID, if any.
+pub fn validate_mentions(
+    conn: &Connection,
+    tenant: Option<&str>,
+    task: &Task,
+    mention_ids: &[String],
+) -> Result<(), String> {
+    let allowed = allowed_mention_ids(conn, tenant, task);
+    for id in mention_ids {
+        if !allowed.contains(id) {
+            return Err(id.clone());
+        }
+    }
+    Ok(())
+}
+
+/// Emit `task.comment_mention` events for each mentioned agent. Returns pending webhooks.
+pub fn emit_mention_events(
+    conn: &Connection,
+    task: &Task,
+    mention_ids: &[String],
+    comment_content: &str,
+    actor_type: &str,
+    actor_id: &str,
+    actor_name: &str,
+) -> Vec<PendingNotifWebhook> {
+    let mut pending = Vec::new();
+    for mentioned_id in mention_ids {
+        let payload = serde_json::json!({
+            "mentioned_agent_id": mentioned_id,
+            "comment_content": comment_content,
+            "actor_name": actor_name,
+            "task_title": task.title,
+        });
+        pending.extend(emit_event(
+            conn,
+            "task.comment_mention",
+            Some(&task.id),
+            &task.project_id,
+            actor_type,
+            actor_id,
+            &payload,
+        ));
+    }
+    pending
 }

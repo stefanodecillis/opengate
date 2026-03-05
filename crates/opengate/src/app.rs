@@ -280,6 +280,7 @@ pub async fn run_server(port: u16, db_path: &str, setup_token: &str) {
                         content: "Task auto-released due to stale agent heartbeat".to_string(),
                         activity_type: Some("assignment".to_string()),
                         metadata: None,
+                        mentions: None,
                     },
                 );
             }

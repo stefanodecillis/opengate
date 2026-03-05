@@ -104,16 +104,6 @@ export class OpenGatePoller {
   private async poll(): Promise<void> {
     if (!this.running) return;
 
-    const maxConcurrent = this.pluginCfg.maxConcurrent ?? 3;
-    const active = this.state.activeCount();
-
-    if (active >= maxConcurrent) {
-      this.logger.info(
-        `[opengate] At capacity (${active}/${maxConcurrent} active) — skipping poll`,
-      );
-      return;
-    }
-
     let inbox: InboxResult;
     try {
       inbox = await fetchInbox(this.pluginCfg.url, this.pluginCfg.apiKey);
@@ -124,7 +114,23 @@ export class OpenGatePoller {
       return;
     }
 
-    // Release orphaned in_progress tasks (not tracked locally)
+    // Reconcile: remove spawned entries for tasks no longer in the inbox.
+    // If a task completed, got cancelled, or was otherwise removed from our
+    // inbox, it won't appear in todo or in_progress — free the slot.
+    const inboxTaskIds = new Set([
+      ...inbox.todoTasks.map((t) => t.id),
+      ...inbox.inProgressTasks.map((t) => t.id),
+    ]);
+    for (const spawnedId of this.state.spawnedIds()) {
+      if (!inboxTaskIds.has(spawnedId)) {
+        this.logger.info(
+          `[opengate] Task ${spawnedId} no longer in inbox (completed/cancelled) — freeing slot`,
+        );
+        this.state.remove(spawnedId);
+      }
+    }
+
+    // Release orphaned in_progress tasks (not tracked locally) and clean state
     for (const task of inbox.inProgressTasks) {
       if (!this.state.isSpawned(task.id)) {
         this.logger.warn(
@@ -132,6 +138,16 @@ export class OpenGatePoller {
         );
         await this.releaseTask(task.id);
       }
+    }
+
+    const maxConcurrent = this.pluginCfg.maxConcurrent ?? 3;
+    const active = this.state.activeCount();
+
+    if (active >= maxConcurrent) {
+      this.logger.info(
+        `[opengate] At capacity (${active}/${maxConcurrent} active) — skipping poll`,
+      );
+      return;
     }
 
     if (inbox.todoTasks.length === 0) return;
