@@ -116,6 +116,7 @@ pub async fn create_question(
                                 question.required_capability.as_deref().unwrap_or(""),
                                 question_preview
                             )),
+                            Some(task_id.as_str()),
                         ));
                     }
                 }
@@ -137,6 +138,7 @@ pub async fn create_question(
                             "question_asked",
                             &format!("Question on: {}", task_title),
                             Some(&question_preview),
+                            Some(task_id.as_str()),
                         ));
                     }
                     // User notifications stored for bridge compatibility
@@ -308,6 +310,7 @@ pub async fn resolve_question(
                 identity.display_name(),
                 resolution_preview
             )),
+            Some(task_id.as_str()),
         ));
     }
 
@@ -499,6 +502,7 @@ pub async fn create_reply(
             notif_type,
             &notif_title,
             Some(&format!("{}: {}", actor_name, reply_preview)),
+            Some(task_id.as_str()),
         ));
     }
 

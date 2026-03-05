@@ -664,6 +664,7 @@ pub struct Notification {
     pub read: bool,
     /// Webhook delivery status: "delivered" | "failed" | null (not attempted)
     pub webhook_status: Option<String>,
+    pub task_id: Option<String>,
     pub created_at: String,
 }
 

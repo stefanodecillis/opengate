@@ -95,6 +95,7 @@ pub fn init_db(path: &str) -> Connection {
             title TEXT NOT NULL,
             body TEXT,
             read INTEGER NOT NULL DEFAULT 0,
+            task_id TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_notifications_agent ON notifications(agent_id, read, created_at);

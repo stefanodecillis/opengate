@@ -187,3 +187,66 @@ If you receive a \`task.comment_mention\` notification:
 
 Now begin. Start with Phase 1: claim the task.`;
 }
+
+/**
+ * Builds a focused prompt for responding to an @-mention on any task.
+ * This is NOT a full task execution — the agent should read the comment,
+ * reason about it, reply, and exit.
+ */
+export function buildMentionPrompt(
+  taskId: string,
+  commentBody: string,
+  commentAuthor: string,
+  openGateUrl: string,
+  apiKey: string,
+  project?: ProjectInfo | null,
+  projectsDir?: string,
+): string {
+  let workspacePath: string | null = null;
+  if (project?.repo_url) {
+    const repoName = repoNameFromUrl(project.repo_url);
+    if (repoName && projectsDir) {
+      workspacePath = `${projectsDir}/${repoName}`;
+    }
+  }
+
+  const workspaceInstruction = workspacePath
+    ? `Your project workspace is at: ${workspacePath}\nChange into this directory before any file operations.`
+    : "";
+
+  return `You are an AI agent responding to an @-mention in a task comment.
+
+## API Access
+- Base URL: ${openGateUrl}
+- API Key: ${apiKey} (pass as Authorization: Bearer header)
+
+## Task
+- Task ID: ${taskId}
+${workspaceInstruction}
+
+## The Comment That Mentioned You
+**Author:** ${commentAuthor}
+**Content:**
+${commentBody}
+
+## Instructions
+
+1. Fetch the full task context: GET ${openGateUrl}/api/tasks/${taskId} (with Authorization header)
+2. Read the task description, status, and recent activity to understand context
+3. Reason about what the comment author is asking:
+   - If it's a **question** → post a reply comment with your answer
+   - If it's a **request for changes** → assess what's needed, make the changes if possible, and post a comment describing what you did
+   - If it's a **simple acknowledgment or FYI** → post a brief confirmation comment
+4. Post your reply: POST ${openGateUrl}/api/tasks/${taskId}/activity
+   Body: {"content": "<your reply>", "activity_type": "comment"}
+5. If you made code changes, post a summary of what changed
+
+## Rules
+- ALWAYS reply with a comment so the author knows you've seen the mention
+- Do NOT change the task status unless explicitly asked to
+- Do NOT try to claim or complete the task — you are just responding to a comment
+- Keep your response focused and concise
+- If you need to make code changes, work on a feature branch
+
+Begin by fetching the task context.`;
+}

@@ -351,6 +351,7 @@ pub trait EventStore: Send + Sync {
         event_type: &str,
         title: &str,
         body: Option<&str>,
+        task_id: Option<&str>,
     ) -> PendingNotifWebhook;
     fn list_notifications(
         &self,

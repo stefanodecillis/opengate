@@ -79,8 +79,9 @@ pub fn insert_question_notification(
     event_type: &str,
     title: &str,
     body: Option<&str>,
+    task_id: Option<&str>,
 ) -> PendingNotifWebhook {
-    insert_notification(conn, agent_id, event_id, event_type, title, body)
+    insert_notification(conn, agent_id, event_id, event_type, title, body, task_id)
 }
 
 fn insert_notification(
@@ -90,10 +91,11 @@ fn insert_notification(
     event_type: &str,
     title: &str,
     body: Option<&str>,
+    task_id: Option<&str>,
 ) -> PendingNotifWebhook {
     conn.execute(
-        "INSERT INTO notifications (agent_id, event_id, event_type, title, body, read) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-        params![agent_id, event_id, event_type, title, body],
+        "INSERT INTO notifications (agent_id, event_id, event_type, title, body, read, task_id) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+        params![agent_id, event_id, event_type, title, body, task_id],
     )
     .unwrap();
     let notification_id = conn.last_insert_rowid();
@@ -130,6 +132,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Assigned: {}", task.title),
                         Some(&format!("{} assigned you this task.", actor_name)),
+                        task_id,
                     ));
                 }
             }
@@ -145,6 +148,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Claimed: {}", task.title),
                         Some(&format!("{} claimed this task.", actor_name)),
+                        task_id,
                     ));
                 }
             }
@@ -161,6 +165,7 @@ fn route_event_notifications(
                             event_type,
                             &format!("Progress: {}", task.title),
                             Some("New task activity posted."),
+                            task_id,
                         ));
                     }
                 }
@@ -174,6 +179,7 @@ fn route_event_notifications(
                             event_type,
                             &format!("Progress: {}", task.title),
                             Some("Task progress update posted."),
+                            task_id,
                         ));
                     }
                 }
@@ -189,6 +195,7 @@ fn route_event_notifications(
                     event_type,
                     &format!("🚨 Blocked: {}", task.title),
                     Some("Task is blocked and needs intervention."),
+                    task_id,
                 ));
             }
         }
@@ -202,6 +209,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Review needed: {}", task.title),
                         Some("Task is ready for review."),
+                        task_id,
                     ));
                 } else if let Some(creator_id) = &creator_id {
                     pending.push(insert_notification(
@@ -211,6 +219,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Completed: {}", task.title),
                         Some("Task has been completed."),
+                        task_id,
                     ));
                 }
             }
@@ -226,6 +235,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Approved: {}", task.title),
                         Some("Task was approved."),
+                        task_id,
                     ));
                 }
                 // Notify assignee if different from creator
@@ -238,6 +248,7 @@ fn route_event_notifications(
                             event_type,
                             &format!("Approved: {}", task.title),
                             Some("Your task was approved."),
+                            task_id,
                         ));
                     }
                 }
@@ -254,6 +265,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Review started: {}", task.title),
                         Some(&format!("{} started reviewing your task.", actor_name)),
+                        task_id,
                     ));
                 }
             }
@@ -268,6 +280,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Changes requested: {}", task.title),
                         Some("Reviewer requested changes."),
+                        task_id,
                     ));
                 }
             }
@@ -289,6 +302,7 @@ fn route_event_notifications(
                             "'{}' is now complete — your task is ready to start.",
                             unblocked_by
                         )),
+                        task_id,
                     ));
                 }
             }
@@ -320,6 +334,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Question on: {}", task_title),
                         Some(&snippet),
+                        task_id,
                     ));
                 }
             }
@@ -341,6 +356,7 @@ fn route_event_notifications(
                         event_type,
                         &format!("Reply on: {}", task.title),
                         Some(&format!("{}: {}", actor, snippet)),
+                        task_id,
                     ));
                 }
             }
@@ -361,6 +377,7 @@ fn route_event_notifications(
                     event_type,
                     &format!("Mentioned in: {}", task_title),
                     Some(&format!("{}: {}", author, snippet)),
+                    task_id,
                 ));
             }
         }
@@ -2083,7 +2100,7 @@ pub fn list_notifications(
     agent_id: &str,
     unread: Option<bool>,
 ) -> Vec<Notification> {
-    let mut sql = "SELECT id, agent_id, event_id, event_type, title, body, read, created_at, webhook_status FROM notifications WHERE agent_id = ?1".to_string();
+    let mut sql = "SELECT id, agent_id, event_id, event_type, title, body, read, created_at, webhook_status, task_id FROM notifications WHERE agent_id = ?1".to_string();
     if let Some(true) = unread {
         sql.push_str(" AND read = 0");
     }
@@ -2100,6 +2117,7 @@ pub fn list_notifications(
             body: row.get(5)?,
             read: row.get::<_, i64>(6)? != 0,
             webhook_status: row.get(8)?,
+            task_id: row.get(9)?,
             created_at: row.get(7)?,
         })
     })

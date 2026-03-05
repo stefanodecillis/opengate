@@ -1,7 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { PluginLogger } from "openclaw/plugin-sdk";
 import type { OpenGatePluginConfig } from "./config.js";
-import { buildBootstrapPrompt } from "./bootstrap.js";
+import { buildBootstrapPrompt, buildMentionPrompt } from "./bootstrap.js";
 import { spawnTaskSession } from "./spawner.js";
 import { TaskState } from "./state.js";
 
@@ -63,6 +63,48 @@ async function fetchInbox(url: string, apiKey: string): Promise<InboxResult> {
     todoTasks: body.todo_tasks ?? [],
     inProgressTasks: body.in_progress_tasks ?? [],
   };
+}
+
+type OpenGateNotification = {
+  id: number;
+  event_type: string;
+  title: string;
+  body: string | null;
+  task_id: string | null;
+};
+
+async function fetchNotifications(url: string, apiKey: string): Promise<OpenGateNotification[]> {
+  const resp = await fetch(`${url}/api/agents/me/notifications?unread=true`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) return [];
+  return (await resp.json()) as OpenGateNotification[];
+}
+
+async function ackNotification(url: string, apiKey: string, notifId: number): Promise<void> {
+  await fetch(`${url}/api/agents/me/notifications/${notifId}/ack`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => {});
+}
+
+async function fetchTaskById(
+  url: string,
+  apiKey: string,
+  taskId: string,
+): Promise<OpenGateTask | null> {
+  try {
+    const resp = await fetch(`${url}/api/tasks/${taskId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as OpenGateTask;
+  } catch {
+    return null;
+  }
 }
 
 export class OpenGatePoller {
@@ -140,6 +182,9 @@ export class OpenGatePoller {
       }
     }
 
+    // Handle unread notifications (mentions, etc.) — these spawn separate sessions
+    await this.handleNotifications();
+
     const maxConcurrent = this.pluginCfg.maxConcurrent ?? 3;
     const active = this.state.activeCount();
 
@@ -201,6 +246,84 @@ export class OpenGatePoller {
         `[opengate] Failed to release task ${taskId}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+  }
+
+  private async handleNotifications(): Promise<void> {
+    let notifications: OpenGateNotification[];
+    try {
+      notifications = await fetchNotifications(this.pluginCfg.url, this.pluginCfg.apiKey);
+    } catch {
+      return;
+    }
+
+    const mentionNotifs = notifications.filter(
+      (n) => n.event_type === "task.comment_mention" && n.task_id,
+    );
+
+    for (const notif of mentionNotifs) {
+      if (!this.running) break;
+
+      const maxConcurrent = this.pluginCfg.maxConcurrent ?? 3;
+      if (this.state.activeCount() >= maxConcurrent) {
+        this.logger.info("[opengate] At capacity — deferring mention notifications");
+        break;
+      }
+
+      // Use a mention-specific key to avoid collision with regular task sessions
+      const mentionKey = `mention:${notif.id}`;
+      if (this.state.isSpawned(mentionKey)) continue;
+
+      await this.spawnMentionSession(notif);
+      await ackNotification(this.pluginCfg.url, this.pluginCfg.apiKey, notif.id);
+    }
+  }
+
+  private async spawnMentionSession(notif: OpenGateNotification): Promise<void> {
+    const taskId = notif.task_id!;
+    this.logger.info(
+      `[opengate] Handling @-mention notification ${notif.id} on task ${taskId}`,
+    );
+
+    // Parse author and body from notification body (format: "author: comment")
+    const bodyText = notif.body ?? "";
+    const colonIdx = bodyText.indexOf(": ");
+    const author = colonIdx > 0 ? bodyText.slice(0, colonIdx) : "Someone";
+    const commentBody = colonIdx > 0 ? bodyText.slice(colonIdx + 2) : bodyText;
+
+    // Resolve project from the task
+    const task = await fetchTaskById(this.pluginCfg.url, this.pluginCfg.apiKey, taskId);
+    let project: ProjectInfo | null = null;
+    if (task?.project_id) {
+      project = await this.resolveProject(task.project_id);
+    }
+
+    const prompt = buildMentionPrompt(
+      taskId,
+      commentBody,
+      author,
+      this.pluginCfg.url,
+      this.pluginCfg.apiKey,
+      project,
+      this.pluginCfg.projectsDir,
+    );
+
+    const result = await spawnTaskSession(
+      `mention-${notif.id}`,
+      prompt,
+      this.pluginCfg,
+      this.openclawCfg,
+    );
+
+    if (!result.ok) {
+      this.logger.error(result.error);
+      return;
+    }
+
+    const mentionKey = `mention:${notif.id}`;
+    this.state.markSpawned(mentionKey, result.sessionKey);
+    this.logger.info(
+      `[opengate] Mention session spawned for notification ${notif.id} → ${result.sessionKey}`,
+    );
   }
 
   private async spawnTask(task: OpenGateTask): Promise<void> {

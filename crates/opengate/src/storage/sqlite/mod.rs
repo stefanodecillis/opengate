@@ -536,6 +536,7 @@ impl EventStore for SqliteBackend {
         event_type: &str,
         title: &str,
         body: Option<&str>,
+        task_id: Option<&str>,
     ) -> PendingNotifWebhook {
         db_ops::insert_question_notification(
             &self.lock(),
@@ -544,6 +545,7 @@ impl EventStore for SqliteBackend {
             event_type,
             title,
             body,
+            task_id,
         )
     }
     fn list_notifications(
